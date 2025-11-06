@@ -48,6 +48,14 @@ resource "azurerm_service_plan" "functions-plan" {
   sku_name            = "Y1" # Consumption plan
 }
 
+# Add Application Insights
+resource "azurerm_application_insights" "functions_insights" {
+  name                = "func-insights-${random_string.suffix.result}"
+  location            = azurerm_resource_group.functions-group.location
+  resource_group_name = azurerm_resource_group.functions-group.name
+  application_type    = "web"
+}
+
 # Create Function App (this is the container which holds our azure functions)
 resource "azurerm_linux_function_app" "functions-apps" {
   name                       = "linux-function-app-${random_string.suffix.result}"
@@ -62,7 +70,9 @@ resource "azurerm_linux_function_app" "functions-apps" {
       python_version = "3.11"
     }
   }
+  # Enable Application Insights integration
   app_settings = {
-    "FUNCTIONS_WORKER_RUNTIME" = "python"
+    "FUNCTIONS_WORKER_RUNTIME"              = "python"
+    "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.functions_insights.connection_string
   }
 }

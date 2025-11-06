@@ -33,6 +33,8 @@ you only pay for actual execution time, measured in milliseconds.
 This pricing model particularly benefits applications with sporadic usage patterns. A function which processes uploaded images might execute hundreds of times during 
 business hours but remain completely idle during nighttime and weekends. With a traditional hosting approach, you would pay for 24/7 server capacity, while with Azure Functions, 
 you pay only for those active processing moments / compute time.
+
+
 ---
 
 ### 1. Iteration - Function App Creation and Basic Triggers
@@ -57,3 +59,25 @@ you pay only for those active processing moments / compute time.
 
 ### TODO info about why every azure function needs a Storage Account
 ### Move information out to top-level readme here?
+
+
+## How the Storage Account relates to Azure Functions
+The Storage Account is a vital part of Azure Functions. It is 100% needed, and it stores: 
+1. **Function code** (in a blob container called `azure-webjob-hosts`)
+2. **Function secrets and keys** (encrypted)
+3. **Execution logs** (for monitoring)
+4. **Queue/Blob/Table trigger metadata**
+5. **Durable function state** (for function pipelines)
+
+
+❗ In this guide we will use the Azure function Python V2 programming model, which uses a decorator-based approach.❗
+You can read more about the differences and implementation using both the V1 and V2 model here:  
+[Azure Functions Python developer guide](https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-python?tabs=get-started%2Casgi%2Capplication-level&pivots=python-mode-decorators)
+
+#### How to test functions locally: 
+A very smart school boy approach is to test your functions locally before pushing them to Azure. You can run any function with the `azure-functions-core-tools`.
+```bash
+brew tap azure/functions
+brew install azure-functions-core-tools@4
+```
+After installing, run command `func start` from your working directory, and voilà, you can now test and debug your Azure function from your local computer.
