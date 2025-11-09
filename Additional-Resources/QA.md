@@ -29,7 +29,7 @@
 > **Answer 6:** Use the NCRONTAB expression: `0 */5 * * * * `. The  format is seconds, minutes, hours, day, month, day-of-week.
 > This expression means "at second 0 of every 5th minute of every hour."
 ---
-> **Question 7:** P-triggered function needs to return data from multiple Azure services. How should you structure this?  
+> **Question 7:** A pipeline-triggered function needs to return data from multiple Azure services. How should you structure this?  
 > 
 > **Answer 7:** Use input bindings to declaratively connect to services (e.g., Cosmos DB input binding, Blob storage input binding) rather than creating SDK clients in code. This simplifies configuration and connection management.
 ---
