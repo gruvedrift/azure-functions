@@ -31,5 +31,19 @@ az functionapp deployment source config-zip \
 
 echo ""
 echo "=== Stage 4: Populating Container with Test Data ==="
+sleep 10
 
+echo ""
 echo "Deployment complete!"
+sleep 1
+
+
+echo ""
+echo "=== How to Test: === "
+echo ""
+echo "Test Cosmos DB Input Binding (Read Only):"
+echo "  curl $FUNCTION_APP_URL/api/hero-information/1"
+
+echo ""
+echo "Test with Input + Output Bindings (Read & Archive):"
+echo "  curl $FUNCTION_APP_URL/api/archive/hero-information/1"

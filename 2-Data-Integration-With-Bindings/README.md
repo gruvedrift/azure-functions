@@ -71,7 +71,7 @@ For implementation details take a look at the sample code in `/functions/functio
 ```python
 # Bindings explanation
 @app.cosmos_db_input(
-    arg_name="hero_information",             # Parameter name in function signature
+    arg_name="hero_information",             # Parameter name in function signature ( can be named anything )
     database_name="herodb",                  # Cosmos DB database name
     container_name="hero-information",       # Container where documents live
     connection="CosmosDbConnectionString",   # App setting name with connection string
@@ -118,6 +118,53 @@ curl https://linux-function-app-2hqhnb.azurewebsites.net/api/hero-information/1
 ```
 You should also se the function log the request: 
 ![image](./img/function-binding-log.png)
+
+
+## 2. Implement Blob Storage output binding to archive notifications
+
+Output bindings save data when a function completes, it basically saves the result automatically.  
+For this demonstration we will add an output biding to our existing `hero-information` function, however, we will create a new function just to keep them separated.
+Similarly to the Input Binding, it is very easy to configure the decorator: 
+```python
+@app.blob_output(
+    arg_name="archive",                                       # Parameter name in function
+    path="hero-archive-audit/hero-{heroId}-{datetime}.json",  # Dynamic blob path
+    connection="AzureWebJobsStorage"                          # Storage connection string
+)
+   
+# Now, the 
+def get_hero_information_with_audit(
+        req: func.HttpRequest,
+        document_list: func.DocumentList,
+        archive: func.Out[str]                                # Output binding parameter from Decorator
+) -> func.HttpResponse:
+```
+⚠️ **Important:** The Blob path prefix must match your container name:
+
+**Container name in Terraform:**
+```hcl
+name = "hero-archive-audit"
+```
+
+**Path prefix in binding:**
+```python
+path = "hero-archive-audit/hero-{heroId}-{datetime}.json"
+                &uarr; Must match container name ❗
+```
+
+If they don't match, you'll get a 404 error when trying to save blobs.
+
+### How to test: 
+After running the `./up.sh` script, do some curl requests against the new function endpoint!  
+We will get the same response as for the function with only Input Binding, but every audit is also archived to the Storage Blob we provisioned. 
+
+**Verify Archive in Azure Portal:**
+1. Navigate to Storage Account → **Containers**
+2. Open **hero-archive-audit** container
+3. See your archived JSON files with timestamps
+
+![img](./img/hero-archive-audit-items.png)
+
 
 
 ## Key Learning Questions:

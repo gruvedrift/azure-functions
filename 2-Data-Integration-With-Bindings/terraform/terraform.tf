@@ -75,6 +75,8 @@ resource "azurerm_linux_function_app" "functions-apps" {
     "FUNCTIONS_WORKER_RUNTIME"              = "python"
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.functions_insights.connection_string
     "CosmosDBConnectionString"              = azurerm_cosmosdb_account.bindings_cosmos_account.primary_sql_connection_string
+    "AzureWebJobsStorage"                   = azurerm_storage_account.functions-storage.primary_connection_string
+
   }
 }
 
@@ -131,3 +133,11 @@ resource "azurerm_cosmosdb_sql_container" "hero_information_container" {
     indexing_mode = "consistent"
   }
 }
+
+# Blob Storage Container for Audit Trail
+resource "azurerm_storage_container" "hero_archive_audit" {
+  name                  = "hero-archive-audit"
+  storage_account_id    = azurerm_storage_account.functions-storage.id
+  container_access_type = "private" # not accessible for public, only used internally
+}
+

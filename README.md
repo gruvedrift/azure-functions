@@ -7,12 +7,17 @@ Additional exam relevant questions are included in QA file
 ### Requirements:
 - Azure subscription
 - Terraform
-- Python or Node? 
-- TODO
+- Python
+- Bash 
+- Azure Functions Core Tool (For locally testing Azure Functions)
 
 ### Prerequisite Knowledge:
-
-- TODO 
+- Basic understanding of cloud computing concepts.
+- Basic understanding of Terraform or other IAC tools.
+- Basic Python knowledge.
+- Basic Database knowledge.
+- Familiarity with command-line interfaces (bash/PowerShell).
+- Basic Azure knowledge about Storage Accounts.
 
 ### Each Iteration contains:
 
@@ -37,29 +42,30 @@ you pay only for those active processing moments / compute time.
 
 ---
 
-### 1. Iteration - Function App Creation and Basic Triggers
-- TODO 
+## 1. Iteration - Function App Creation and Basic Triggers:
+
+* **Create and configure Azure Function Apps** - Provision Function Apps, App Service Plans, Storage Accounts, and Application Insights using Terraform.
+* **Implement HTTP-triggered functions** - Build interactive endpoints responding to user requests with real-time responses.
+* **Create timer-triggered functions** - Configure scheduled execution using CRON expressions for automated tasks.
+* **Add webhook-triggered functions** - Implement event notification receivers following a *fire-and-forget* pattern for external system integration.
+* **Configure function-level security** - Implement authentication with access keys (`ANONYMOUS`, `FUNCTION` and `ADMIN` levels) and manage key rotation via Azure CLI.
+* **Understand trigger execution patterns** - Learn storage requirements for stateful triggers, cold starts, and the differences between trigger types.
+
 ---
 
-### 2. Iteration - Data Integration with Bindings 
+## 2. Iteration - Data Integration with Bindings 
 - TODO
 ---
 
-### 3. Iteration - Event-Driven Data Processing 
+## 3. Iteration - Event-Driven Data Processing 
 - TODO
 ---
 
 
 #### Additional notes: 
-- Hosting plans: Consumption vs Premium vs App Service 
-- Stack is : app function + app insights + storage account + log analytics workspace + app service plan
-
-#### Add screenshots from udemy? 
 
 
 ### TODO info about why every azure function needs a Storage Account
-### Move information out to top-level readme here?
-
 
 ## How the Storage Account relates to Azure Functions
 The Storage Account is a vital part of Azure Functions. It is 100% needed, and it stores: 

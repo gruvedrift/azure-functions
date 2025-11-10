@@ -19,6 +19,15 @@ output "cosmos_container_name" {
 }
 
 output "cosmos_db_connection_string" {
-  sensitive = true  # Hide from terminal
+  sensitive = true # Hide from terminal
   value     = azurerm_cosmosdb_account.bindings_cosmos_account.primary_sql_connection_string
+}
+
+output "storage_connection_string" {
+  sensitive = true # Hide from terminal
+  value     = azurerm_storage_account.functions-storage.primary_connection_string
+}
+
+output "blob_audit_archive_container_name" {
+  value = azurerm_storage_container.hero_archive_audit.name
 }
