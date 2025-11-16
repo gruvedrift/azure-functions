@@ -56,6 +56,34 @@ resource "azurerm_application_insights" "functions_insights" {
   application_type    = "web"
 }
 
+
+# Create Azure Service Bus Namespace
+resource "azurerm_servicebus_namespace" "functions-service-bus" {
+  location            = azurerm_resource_group.functions-group.location
+  name                = "sb-functions-${random_string.postfix.result}"
+  resource_group_name = azurerm_resource_group.functions-group.name
+  sku                 = "Standard"
+}
+
+# Create Azure Service Bus Queue
+resource "azurerm_servicebus_queue" "hero-analytics-queue" {
+  name         = "hero-analytics-queue"
+  namespace_id = azurerm_servicebus_namespace.functions-service-bus.id
+
+  # Retry configuration
+  max_delivery_count                   = 10   # Try 10 times before dead lettered
+  dead_lettering_on_message_expiration = true # Move expired messages to dead letter
+
+  default_message_ttl = "P1D" # Messages expire after 1 Day
+}
+
+# Create Table storage for Hero Statistics
+resource "azurerm_storage_table" "hero-statistics" {
+  name                 = "HeroQueryStatistics"
+  storage_account_name = azurerm_storage_account.functions-storage.name
+}
+
+
 # Create Function App
 resource "azurerm_linux_function_app" "functions-apps" {
   name                       = "linux-function-app-${random_string.postfix.result}"
@@ -77,6 +105,9 @@ resource "azurerm_linux_function_app" "functions-apps" {
     "CosmosDBConnectionString"              = azurerm_cosmosdb_account.bindings_cosmos_account.primary_sql_connection_string
     "AzureWebJobsStorage"                   = azurerm_storage_account.functions-storage.primary_connection_string
 
+    # Service Bus connection
+    "ServiceBusConnection" = azurerm_servicebus_namespace.functions-service-bus.default_primary_connection_string
+
   }
 }
 
@@ -87,7 +118,7 @@ resource "azurerm_cosmosdb_account" "bindings_cosmos_account" {
   name                = "cosmosdb-${random_string.postfix.result}"
   offer_type          = "Standard"
   resource_group_name = azurerm_resource_group.functions-group.name
-  kind                = "GlobalDocumentDB" # SQL api
+  kind                = "GlobalDocumentDB"
 
   consistency_policy {
     consistency_level = "Session"

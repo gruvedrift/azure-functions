@@ -87,3 +87,26 @@ brew tap azure/functions
 brew install azure-functions-core-tools@4
 ```
 After installing, run command `func start` from your working directory, and voilà, you can now test and debug your Azure function from your local computer.
+
+If you would like to do testing from your local machine &rarr; real Azure resources, you can add a `local.settings.json` file to your `/functions` directory.  
+Within it, you can place connection strings / authentication strings to any Azure resource. For example:
+```json
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "CosmosDbConnectionString": YOUR_COSMOS_DB_CONNECTION_STRING,
+    "AzureWebJobsStorage": YOUR_STORAGE_ACCOUNT_PRIMARY_CONNECTION_STRING,
+    "ServiceBusConnection": YOUR_SERVICE_BUS_CONNECTION_STRING, 
+  },
+  "ConnectionStrings": {}
+}
+```
+
+All these connection strings are easily obtained through the azure portal, but even EASIER is it to add these to the `output.tf` file and simply using the Terraform CLI: 
+```hcl
+terraform ouput cosmos_db_connection_string 
+```
+
+Thank you for checking out this guide, and a shout-out to my lovely wife. It was not easy, we had our ups and downs, but we made it.  
+You always knew there was something special about me.

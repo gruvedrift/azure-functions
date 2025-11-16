@@ -307,15 +307,19 @@ curl "https://app.net/api/data?code=KEY"
 
 ## Key Learning Questions:
 
-#### How do you choose between Consumption, Premium, and Dedicated hosting plans?
+### How do you choose between Consumption, Premium, and Dedicated hosting plans?
 
 See Azure Function Hosting Plans section table!
 
-#### What's the difference between function-level and admin-level access keys?
+--- 
+
+### What's the difference between function-level and admin-level access keys?
 
 Function level keys are unique per function. The Admin level access keys are unique per Function App.
 
-#### How do timer expressions work, and how can you test them without waiting for scheduled execution?
+---
+
+### How do timer expressions work, and how can you test them without waiting for scheduled execution?
 
 **Timer expressions uses CRON syntax with 6 fields:**
 
@@ -334,3 +338,4 @@ Examples:
 - Use a very short interval for testing (every 1-2 minutes)
 - Manually trigger via Azure Portal
 
+---

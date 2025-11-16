@@ -19,11 +19,11 @@ Implement input bindings that automatically provide data to your functions and o
 3. Create Service Bus output binding for reliable message delivery
 4. Add Table Storage binding for tracking notification history
 5. Configure binding connection strings and authentication
-6. Test data flow through multiple bindings in a single function
+6. Test data flow through multiple bindings in a single function (Testing is done throughout implementation)
 
 ## Note on Bindings:
 
-Bindings are Azures declarative way to connect functions to Azure resources. In Python v2, bindings are implemented as decorators, as we will soon see.
+Bindings are Azure's declarative way to connect functions to Azure resources. In Python v2, bindings are implemented as decorators, as we will soon see.
 They let us specify WHAT we want, instead of HOW we want it. Bindings eliminate boilerplate code for connections, authentication, serialization and error handling. 
 
 #### Key characteristics
@@ -129,10 +129,9 @@ Similarly to the Input Binding, it is very easy to configure the decorator:
 @app.blob_output(
     arg_name="archive",                                       # Parameter name in function
     path="hero-archive-audit/hero-{heroId}-{datetime}.json",  # Dynamic blob path
-    connection="AzureWebJobsStorage"                          # Storage connection string
+    connection="AzureWebJobsStorage"                          # Storage connection string to Azuere Storage Account
 )
    
-# Now, the 
 def get_hero_information_with_audit(
         req: func.HttpRequest,
         document_list: func.DocumentList,
@@ -165,16 +164,246 @@ We will get the same response as for the function with only Input Binding, but e
 
 ![img](./img/hero-archive-audit-items.png)
 
+### Use cases: 
+This **write-and-forget** pattern is useful for scenarios like: 
+- Archiving/audit logs (what we built)
+- Storing files/images
+- Data lake/analytics
+- Backups
+
+## 3 + 4: Service Bus Queue Output + Table Storage Output
+
+In the previous iteration we created an output-binding to archive / audit. In that scenario we needed **persistence** and **direct write** to storage.  
+In this scenario we will pass messages through our function and into another consuming component. 
+
+### Characteristics: 
+- Asynchronous processing - Decoupled sender from receiver 
+- Guaranteed delivery - Messages will not be lost
+- Built-in retry logic - Auto-retry on failure 
+- Dead letter queue - Failed messages go to special queue
+- Message lifetime - Can expire after defined time
+- FIFO ordering  - Messages are processed in order (First-In-First-Out)
+
+
+This pattern is very useful for scenarios like: 
+- Background job processing 
+- Workflow orchestration
+- Decoupling of microservices
+- Reliable command/event delivery
+
+
+### Implementation: 
+For these particular implementation steps we need the following infrastructure: 
+- **Azure Service Bus Namespace** : Provisioned through Terraform.
+- **Azure Service Bus Queue** : Provisioned through Terraform.
+- **Table storage** : Provisioned through Terraform (part of the Storage Account).
+
+And bindings for: 
+- **Cosmos DB Input** : Similar to previous iterations.
+- **Blob Storage Output**: Similar to previous iteration with archiving to Blob.
+- **Service Bus Queue Output**: For passing messages to Queue from exposed HTTP function.
+- **Service Bus Queue Trigger**: For consumer function to trigger on new Messages to Queue.
+- **Table Output**: For consumer function to write analytics to Table Storage.
+
+
+### Service Bus Bindings: 
+```python
+# Function to push messages can use this binding:
+@app.service_bus_queue_output(
+    arg_name="analytics_queue",             # Function variable, can be named anything 
+    queue_name="hero-analytics-queue",      # Queue name, must match with resource from azurerm_servicebus_queue 
+    connection="ServiceBusConnection",      # Connection / authentication method
+)
+def get_hero_with_analytics(
+    req: func.HttpRequest,
+    document_list: func.DocumentList,
+    archive: func.Out[str],
+    analytics_queue: func.Out[str],
+) -> func.HttpResponse:
+   
+# Function to consume messages from queue can use this binding:
+@app.service_bus_queue_trigger(
+    arg_name="msg",                          # Function variable, can be named anything
+    queue_name="hero-analytics-queue",       # Queue name, must math with resource from azurerm_servicebus_queue
+    connection="ServiceBusConnection"        # Connection / authentication method 
+)
+def process_analytics(
+    msg: func.ServiceBusMessage,
+    hero_stats: func.Out[str],
+):
+```
+
+
+### Architecture
+Once we have glued everything together, the architecture / request flow will look something like this: 
+
+```mermaid
+graph TD
+   User[User Request GET ../hero-information/1]
+
+User --> AzureFunction[Function: HeroInformationWithAnalytics]
+
+AzureFunction -->|Input Binding| CosmosDB[(Read Hero Data)]
+AzureFunction -->|Output Binding| BlobStorage[(Blob Storage: Archive Request)]
+AzureFunction -->|Output Binding| ServiceBus[Service Bus:  hero-analytics-queue]
+AzureFunction -->|HTTP Response| UserResponse[User Gets Response - Instant!]
+
+ServiceBus -->|Push To Queue| QueueMessage[Queued Message - Analytics Event]
+QueueMessage -->|Automatic Trigger| ConsumerFunction[Consumer:  FunctionProcessHeroAnalytics]
+ConsumerFunction -->|Output Binding| TableStorage[(Table Storage: HeroQueryStatistics)]
+```
+
+
+### How to test
+Start by provisioning infrastructure with the `up.sh` script as before.  
+Once it has completed, you can, as before populate the CosmosDB with some test data by running the `populate_database.sh` script. 
+Lastly, run the `hero_information_request.sh` script, it will perform multiple HTTP requests to the newly created Azure Function: `HeroInformationWithAnalytics`.
+
+I would suggest that you inspect logs from for example the consuming function `ProcessHeroAnalytics` from:  
+Azure Portal &rarr; Function App &rarr; ProcessHeroAnalytics &rarr; Logs Tab  
+You should observe the Messages on Queue being consumed and handled correctly:
+
+```bash
+2025-11-16T18:03:57Z   [Information]   Executing 'Functions.ProcessHeroAnalytics' (Reason='(null)', Id=26a26a9a-1c90-4b08-85b5-ecbbf88f4ba2)
+2025-11-16T18:03:57Z   [Information]   Trigger Details: MessageId: 796ff79c0e2742568c47095abd3fa7a6, SequenceNumber: 6, DeliveryCount: 1, EnqueuedTimeUtc: 2025-11-16T18:03:56.6630000+00:00, LockedUntilUtc: 2025-11-16T18:04:56.6780000+00:00, SessionId: (null)
+2025-11-16T18:03:57Z   [Verbose]   Sending invocation id: '26a26a9a-1c90-4b08-85b5-ecbbf88f4ba2
+2025-11-16T18:03:57Z   [Verbose]   Posting invocation id:26a26a9a-1c90-4b08-85b5-ecbbf88f4ba2 on workerId:948d8091-3991-4722-9ea8-6e058159a924
+2025-11-16T18:03:57Z   [Information]   Processing : hero_queried for Queen of Pain
+2025-11-16T18:03:57Z   [Information]   Statistics updated for hero: Queen of Pain
+2025-11-16T18:03:57Z   [Information]   Request [5869e984-5cd1-4961-80e7-7d0ff138d5d5] POST https://funcstoragemnu6be.table.core.windows.net/$batch
+
+x-ms-version:REDACTED
+DataServiceVersion:REDACTED
+Accept:application/json
+Content-Type:multipart/mixed; boundary=batch_559a840d-6109-46a0-866a-45c307465e71
+x-ms-client-request-id:5869e984-5cd1-4961-80e7-7d0ff138d5d5
+x-ms-return-client-request-id:true
+User-Agent:azsdk-net-Data.Tables/12.11.0 (.NET 8.0.12; Debian GNU/Linux 11 (bullseye))
+x-ms-date:REDACTED
+Authorization:REDACTED
+client assembly: Azure.Data.Tables
+2025-11-16T18:03:57Z   [Information]   Response [5869e984-5cd1-4961-80e7-7d0ff138d5d5] 202 Accepted (00.1s)
+
+```
+
+It is also possible to see the Table storage content through the Azure CLI:   
+### CLI example to see table storage:  
+```bash
+
+az storage entity query \
+  --table-name HeroQueryStatistics \
+  --account-name funcstoragemnu6be \
+  --query "sort_by(items, &Timestamp)[].{Hero:HeroName, HeroId:HeroId, Time:Timestamp}" \
+  --output table \
+  
+# Will output:
+
+Hero            HeroId    Time
+--------------  --------  --------------------------------
+Queen of Pain   5         2025-11-16T17:59:02.738753+00:00
+Dragon Knight   6         2025-11-16T17:59:06.816880+00:00
+Invoker         1         2025-11-16T18:03:54.722978+00:00
+Juggernaut      2         2025-11-16T18:03:55.222184+00:00
+Axe             3         2025-11-16T18:03:55.882862+00:00
+Queen of Pain   5         2025-11-16T18:03:56.687362+00:00
+Dragon Knight   6         2025-11-16T18:03:57.147757+00:00
+Queen of Pain   5         2025-11-16T18:03:57.455944+00:00
+Queen of Pain   5         2025-11-16T18:03:57.814418+00:00
+Dragon Knight   6         2025-11-16T18:03:58.406249+00:00
+Leshrac         7         2025-11-16T18:03:58.747262+00:00
+Crystal Maiden  4         2025-11-16T18:03:59.073895+00:00
+```
+We can also observe quite clearly how the requests are being registered in the `Insights` tab for our Service Bus:  
+
+![img](./img/service-bus-analytics.png)
+
+
+## 5. Configure binding connection strings and authentication:
+All bindings authenticate using connection strings configured in Terraform app settings.
+
+**Connection Strings Configured**: 
+- `CosmosDbConnectionString` - Authenticates Cosmos DB access
+- `AzureWebJobsStorage` - Authenticates Storage Account (Blob + Table)
+- `ServiceBusConnection` - Authenticates Service Bus access
+
+**How bindings use authentication:**
+```python
+@app.cosmos_db_input(
+    connection="CosmosDbConnectionString"  # References app setting
+)
+```
+The `connection` parameter tells the binding which app setting contains the connection string. Azure handles authentication automatically using these credentials.
+
+#### ⚠️ Security Note ⚠️
+Connection strings contain secrets and should never be committed to GitHub. They are configured via Terraform and stored securely in Azure.
+
+#### Alternative Authentication:
+Managed Identity can be used instead of connection strings for enhanced security (not covered in this project, but stay tuned for projects covering it in the future).
 
 
 ## Key Learning Questions:
 
-#### How do bindings differ from manually using Azure SDKs in your function code? 
+### How do bindings differ from manually using Azure SDKs in function code? 
 
-TODO: Answer
+**Bindings are declarative** - we specify WHAT data we need in the decorator, and Azure handles all connection logic automatically.
 
-#### What happens when an output binding fails while your function logic succeeds? 
+**Manual SDKs require:**
+- Creating client objects (CosmosClient, BlobServiceClient)
+- Managing connection strings and authentication
+- Writing serialization / deserialization code
+- Implementing retry logic
+- Handle connection lifecycles
 
-TODO: Answer
+**Bindings provide:**
+- Automatic connection management
+- Built-in authentication
+- Declarative configuration
+- Zero boilerplate code 🌟
 
-#### How can you use multiple output bindings to write to different services atomically? 
+**Example:**
+- **With SDK:** 50+ lines of connection, auth, and error handling
+- **With binding:** 1 decorator + 1 line to use the data
+
+---
+
+### What happens when an output binding fails while your function logic succeeds? 
+
+The function **fails and retries**, but not in a **transactional** way:
+
+1. Function logic executes successfully
+2. Output binding executes sequentially  
+3. If binding fails, (for example storage unavailable):
+   - Function is marked as failed
+   - Already completed bindings are not rolled back ⚠️
+   - For retriable triggers (Service Bus/Queue): Message returns to queue for retry
+   - For HTTP triggers -> returns 500 error
+
+**On retry:**
+- Entire function runs again
+- ALL bindings execute again (including ones that already succeeded)
+
+```python
+@app.blob_output(...)
+@app.service_bus_output(...)
+def function(req, blob, queue):
+    blob.set(data)     # Executes and SUCCEEDS
+    queue.set(msg)     # FAILS 
+    
+# Function fails, trigger retries
+# On retry:
+#   - blob.set() executes AGAIN (duplicate blob or overwrite)
+#   - queue.set() hopefully succeeds this time
+```
+
+---
+
+### How can you use multiple output bindings to write to different services atomically?
+You can't - Azure Functions bindings are NOT transactional.
+
+**What happens:**
+- Bindings execute sequentially in decorator order
+- Each binding completes independently
+- No rollback if later bindings fail
+- No coordination between services
+
+So, be careful!

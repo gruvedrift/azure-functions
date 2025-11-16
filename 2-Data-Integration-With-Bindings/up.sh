@@ -47,3 +47,7 @@ echo "  curl $FUNCTION_APP_URL/api/hero-information/1"
 echo ""
 echo "Test with Input + Output Bindings (Read & Archive):"
 echo "  curl $FUNCTION_APP_URL/api/archive/hero-information/1"
+
+echo ""
+echo "Test with Input + Output Bindings + Service Bus:"
+echo "  curl $FUNCTION_APP_URL/api/analytics/hero-information/1"
