@@ -34,6 +34,22 @@ How they could work together:
 - Event grid: "new order created" (broadcast notification)
 - Service bus: "process order 123" ( work the item with retry ) // todo what is the item here
 
+### Semi-BIS Terraform file structure: 
+## File Structure Summary
+```
+terraform/
+├── main.tf                       # Provider, resource group, random suffix
+├── variables.tf                  # All input variables
+├── storage.tf                    # Storage account, containers, tables
+├── cosmosdb.tf                   # Cosmos DB, databases, containers
+├── servicebus.tf                 # Service Bus namespace & queues
+├── eventgrid.tf                  # Event Grid topic
+├── eventgrid-subscriptions.tf    # Event Grid subscriptions (separate for clarity)
+├── functions.tf                  # App Insights, Service Plan, Function App
+└── outputs.tf                    # All outputs 
+```
+
+
 ### Overall project: 
 1. upload item image
 2. Blob trigger function ( automatically ) 
@@ -130,6 +146,14 @@ Other stuff to do:
 - event subscription 
 - storage containers ( item uploads, item thumbnail, items, leases - for change feed??)
 - 
+
+
+### Leases container: 
+This is a container that is needed for the change feed trigger to track which items has been processed.
+Its purpose is to track which changes has been processed and which function instance that is processing which partition.
+
+It works as a checkpoint if a function crashes half-way through processing.
+
 
 ### What we will build 
 
