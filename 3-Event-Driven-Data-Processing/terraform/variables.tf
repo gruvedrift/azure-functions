@@ -31,3 +31,15 @@ variable "cosmos_account_prefix" {
   type        = string
   default     = "cosmosdb"
 }
+
+variable "event_grid_prefix" {
+  description = "Prefix for the Event Grid"
+  type        = string
+  default     = "item-inventory-events-"
+}
+
+variable "function_app_name_prefix" {
+  description = "Prefix for Function App name"
+  type        = string
+  default     = "linux-function-app"
+}

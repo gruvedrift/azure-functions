@@ -42,7 +42,6 @@ terraform/
 ├── variables.tf                  # All input variables
 ├── storage.tf                    # Storage account, containers, tables
 ├── cosmosdb.tf                   # Cosmos DB, databases, containers
-├── servicebus.tf                 # Service Bus namespace & queues
 ├── eventgrid.tf                  # Event Grid topic
 ├── eventgrid-subscriptions.tf    # Event Grid subscriptions (separate for clarity)
 ├── functions.tf                  # App Insights, Service Plan, Function App
@@ -69,38 +68,65 @@ Everything will be automatic, the "user" just uploads an image and everything el
 // TODO make this better, but it is overall the correct architecture
 ```mermaid
 graph TD
-%% Upload Flow
-Upload[User Uploads Image<br/>item-name.png]
+    Upload[Uploads Image<br/>Messerschmidts-Reaver.png]
+    Upload -->|Stored in| BlobStorage[(Blob Storage:</br><br/>item-uploads/)]
+    BlobStorage -->|Triggers| BlobTrigger[Blob Trigger Function:</br><br/>ProcessItemUpload<br/><br/>1. Validate image<br/>2. Extract metadata<br/>3. Create stub in Cosmos]
+    BlobTrigger -->|Create item description| CosmosDB[(Cosmos DB<br/>items container<br/><br/>status: pending)]
+    CosmosDB -->|Change detected| CosmosTrigger[Cosmos DB Trigger:</br><br/>OnItemChanged<br/><br/>Checks status field:<br/>- pending --> ItemNeedsReview<br/>- approved --> ItemApproved]
+    
+    CosmosTrigger -->|Publish event| EventGrid[Event Grid Topic<br/>item-inventory-events]
+    EventGrid -->|ItemNeedsReview|NotifyAdmin[Event Grid Trigger:<br/>SendAdminNotification]
+    NotifyAdmin -->|Email|AdminEmail[Admin notified:</br><br/>New item needs review!]
 
-Upload -->|File arrives|BlobTrigger[Blob Trigger Function<br/>ProcessItemUpload]
+    AdminEmail -->|Admin reviews|AdminAPI[Admin API Function:</br><br/>PATCH /admin/items/id<br/><br/>Updates:<br/>- price<br/>- stats<br/>- description<br/>- status: approved]
+    AdminAPI -->|Update|CosmosDB
 
-BlobTrigger -->|1.Validate & Extract| Validate[Validate Image<br/>Extract name from filename]
-BlobTrigger -->|2.Create Stub|CosmosWrite[Create Item Listing<br/>status: pending_admin_review]
-CosmosWrite -->|Item stub created|CosmosDB[(Cosmos DB<br/>items container)]
+    %% Update Search Index
+    EventGrid -->|ItemApproved|SearchIndex[Event Grid Trigger:<br/>UpdateSearchIndex]
+    EventGrid -->|ItemApproved|Analytics[Event Grid Trigger:<br/>TrackItemAnalytics]
 
-CosmosDB -->|Change detected<br/>status = pending| CosmosTrigger1[Cosmos DB Trigger<br/>OnItemChanged]
-CosmosDB -->|Change detected<br/>status = approved|CosmosTrigger2[Cosmos DB Trigger<br/>OnItemChanged]
-CosmosTrigger1 -->|Publish:<br/>ItemNeedsReview|EventGrid[Event Grid Topic<br/>inventory-events]
+    SearchIndex -->|Write to|SearchTable[(Table Storage<br/>SearchIndex)]
+    Analytics -->|Write to|AnalyticsTable[(Table Storage<br/>InventoryAnalytics)]
+```
 
-EventGrid -->|Route event type:<br/>ItemNeedsReview| NotifyAdmin[Event Grid Trigger<br/>SendAdminNotification]
 
-%% Admin Update Flow
-NotifyAdmin -->|Send email|AdminEmail[Admin receives email:<br/>Item needs review]
-AdminEmail -->|Admin reviews|AdminAPI[Admin calls API<br/>PATCH /admin/items/id]
+## Event Grid Subscriptions:
+### Scope: 
+Where to listen, this is configuring which event source the event grid subscription is subscribing to.
+```hcl
+scope = azurerm_eventgrid_topic.inventory_events.id
+```
+**Meaning:** "Listen to events published to MY custom topic"
 
-AdminAPI -->|Update fields|UpdateCosmos[Update Item:<br/>price, stats, description<br/>status: approved]
-UpdateCosmos -->|Item updated|CosmosDB
-
-%% Second Change Trigger - Approved Item
-CosmosTrigger2 -->|Publish:<br/>ItemApproved|EventGrid
-
-%% Multiple Subscribers
-EventGrid -->|Route event type:<br/>ItemApproved|SearchIndex[Event Grid Trigger<br/>UpdateSearchIndex]
-EventGrid -->|Route event type:<br/>ItemApproved|Analytics[Event Grid Trigger<br/>TrackItemAnalytics]
-
-SearchIndex -->|Update|SearchDB[(Search Index)]
+**Resolves to:**
 
 ```
+/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.EventGrid/topics/inventory-events-abc123
+```
+**How its used:**
+```python
+app.event_grid_output(
+    arg_name="event",
+    topic_endpoint="EventGridTopicEndpoint",  # Points to this topic
+    topic_key="EventGridTopicKey"
+)
+def on_item_changed(documents, event):
+    event.set(json.dumps([{
+        "eventType": "Inventory.ItemNeedsReview",
+        # ...
+    }]))
+    # Event goes to inventory-events topic
+```
+### Event types: 
+Filters on which event that should trigger a subscription
+
+```hcl
+included_event_types = ["Inventory.ItemNeedsReview"]  #  Filter
+```
+In this project, we filter on two different events, but for three subscribers:
+- ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
+- ItemApproved event &rarr; Goes to UpdateSearchIndex + InventoryAnalytics
+
 
 #### Update search index: 
 Purpose: Make approved items searchable. Cosmos DB is great for storing data, but not optimized for text search. This is why we want a **search-optimized index**
