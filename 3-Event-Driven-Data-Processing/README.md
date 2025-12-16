@@ -3,9 +3,11 @@
 
 
 ### Service Bus vs Event Grid 
-Complementary not replacements, 
-SB purpose: Reliable messaging for commands and items to work on
-SB-Used for: Background jobs (process this order), Work queues ("resize these 100 images"), Pont-to-point communication, when **guarantied processing** is needed.
+Complementary not replacements,  
+
+**Service Bus purpose**: Reliable messaging for commands and items to work on.
+
+**Service Bus Used for**: Background jobs (process this order), Work queues ("resize these 100 images"), Pont-to-point communication, when **guarantied processing** is needed.
 
 architecture: 
 ```
@@ -48,6 +50,11 @@ terraform/
 └── outputs.tf                    # All outputs 
 ```
 
+### storage.tf 
+Used for image uploads and holding images
+
+### cosmosdb.tf
+Used for holding documents created by function and followup by administrator
 
 ### Overall project: 
 1. upload item image
@@ -184,3 +191,33 @@ It works as a checkpoint if a function crashes half-way through processing.
 ### What we will build 
 
 * This is a commit test
+
+
+### Common fail scenarios and outcome: 
+``` 
+Message has reached MaxDequeueCount of 5. Moving message to queue 'webjobs-blobtrigger-poison'.
+```
+
+### Running the function locally: 
+1. Create the terraform outputs that we need for our bindings: 
+   - Connection string to the Blob storage for image uploads 
+   - Connection string to the storage account where the function will write documents
+2. Capture them in a script, they are sensitive so we can not see them directly from the Terraform output.
+3. Add them to your `local.settings.json` configuration so that your locally running function can interact with both databases.
+
+Result:   
+``` 
+For detailed output, run func with --verbose flag.
+[2025-12-16T09:18:03.059Z] Host lock lease acquired by instance ID '0000000000000000000000008BBD12A2'.
+[2025-12-16T09:18:29.652Z] Executing 'Functions.ProcessItemUpload' (Reason='New blob detected(LogsAndContainerScan): item-uploads/Glimmer-Cape.png', Id=569b1ccd-0767-4f46-a14a-e4838b7e48fa)
+[2025-12-16T09:18:29.653Z] Trigger Details: MessageId: 9e22a625-86fe-491c-a600-a68de3eb0cd4, DequeueCount: 1, InsertedOn: 2025-12-16T09:18:29.000+00:00, BlobCreated: 2025-12-16T09:18:24.000+00:00, BlobLastModified: 2025-12-16T09:18:24.000+00:00
+[2025-12-16T09:18:29.688Z] Received upload: <azure.functions.blob.InputStream object at 0x1073d94f0>
+[2025-12-16T09:18:29.688Z] Processing upload: item-uploads/Glimmer-Cape.png.png
+[2025-12-16T09:18:29.739Z] Item stub created: Glimmer Cape (ID: 16028cb8-f8e1-407b-a6ef-405d4a1ae02b)
+[2025-12-16T09:18:29.739Z] Status: pending_admin_review
+[2025-12-16T09:18:29.740Z] Image: item-uploads/Glimmer-Cape.png.png
+[2025-12-16T09:18:30.644Z] Executed 'Functions.ProcessItemUpload' (Succeeded, Id=569b1ccd-0767-4f46-a14a-e4838b7e48fa, Duration=1178ms)
+```
+
+You should now be able to observe the document created in the Cosmos DB Data explorer
+![img](./img/cosmos-db-document.png)
