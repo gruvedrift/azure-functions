@@ -221,3 +221,8 @@ For detailed output, run func with --verbose flag.
 
 You should now be able to observe the document created in the Cosmos DB Data explorer
 ![img](./img/cosmos-db-document.png)
+
+
+### Test script 
+I have added a script for testing uploads: `./test_upload.sh`. This script will use the Azure CLI and upload an image to the Azure Blob Storage, and thus trigger the 
+azure function to create a new item document, and upload it to the Cosmos DB. 
