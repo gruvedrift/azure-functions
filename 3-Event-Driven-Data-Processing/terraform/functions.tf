@@ -49,7 +49,7 @@ resource "azurerm_linux_function_app" "functions-app" {
     "AzureWebJobsStorage"      = azurerm_storage_account.functions-storage.primary_connection_string
     "CosmosDBConnectionString" = azurerm_cosmosdb_account.bindings_cosmos_account.primary_sql_connection_string
 
-    # Event Grid
+    # Event Grid Configuration
     "EventGridTopicEndpoint" = azurerm_eventgrid_topic.item_inventory_events.endpoint
     "EventGridTopicKey"      = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
   }

@@ -1,6 +1,11 @@
 # Project Iteration 3: Event-Driven Data Processing 
 
 
+### TODO 
+- Document Event Grid Topics better, should be a small section
+- 
+
+
 
 ### Service Bus vs Event Grid 
 Complementary not replacements,  
@@ -95,40 +100,111 @@ graph TD
     SearchIndex -->|Write to|SearchTable[(Table Storage<br/>SearchIndex)]
     Analytics -->|Write to|AnalyticsTable[(Table Storage<br/>InventoryAnalytics)]
 ```
+note: we are not sending email in this example, but you get the gist of it.
+### 
+Subscriptions: 
+- Consumer Function for Item in need for review.
+- Consumer Update search index? 
+- Consumer Update Inventory Analytics.
 
 
 ## Event Grid Subscriptions:
-### Scope: 
-Where to listen, this is configuring which event source the event grid subscription is subscribing to.
+An Event Grid implements the Pub/Sub architecture.
+### Component breakdown: 
+**1. Event Grid Topic (Message Bus):**  
+A centralized endpoint that receives and routes events.  
+Terraform configuration example: 
 ```hcl
-scope = azurerm_eventgrid_topic.inventory_events.id
+# terraform/eventgrid.tf
+resource "azurerm_eventgrid_topic" "inventory_events" {
+  name                = "event-name"
+  resource_group_name = azurerm_resource_group.functions-group.name
+  location            = "northeurope"
+  
+  input_schema = "CloudEventSchemaV1_0"  # Accepts CloudEvents format
+}
 ```
-**Meaning:** "Listen to events published to MY custom topic"
+The EventGrid resource provides us with a Endpoint url (on which to push events) and an Access Key for authentication.  
+Both of these are configured in the `app_settings` of our Azure Linux Function App resource:  
+```hcl
+# Event Grid Configuration
+"EventGridTopicEndpoint" = azurerm_eventgrid_topic.item_inventory_events.endpoint
+"EventGridTopicKey"      = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
+```
 
-**Resolves to:**
-
-```
-/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.EventGrid/topics/inventory-events-abc123
-```
-**How its used:**
+**2. Publisher (Event producer):**  
+Azure Function that sends events TO the Event Grid Topic.  
+Publisher Function example:
 ```python
-app.event_grid_output(
-    arg_name="event",
-    topic_endpoint="EventGridTopicEndpoint",  # Points to this topic
-    topic_key="EventGridTopicKey"
-)
-def on_item_changed(documents, event):
-    event.set(json.dumps([{
-        "eventType": "Inventory.ItemNeedsReview",
-        # ...
-    }]))
-    # Event goes to inventory-events topic
-```
-### Event types: 
-Filters on which event that should trigger a subscription
+import azure.functions as func
+import json
+app = func.FunctionApp()
 
+@app.function_name(name="OnItemChanged")
+@app.cosmos_db_trigger(...)
+@app.event_grid_output(
+    arg_name="event_grid_event",
+    topic_endpoint_uri="EventGridTopicEndpoint",  #  Points to Topic URI
+    topic_key_setting="EventGridTopicKey"         #  Access key for auth
+)
+def on_item_changed(documents, event_grid_event):
+    # Create CloudEvent
+    event = {
+        "specversion": "1.0",
+        "type": "Inventory.ItemNeedsReview",      # Event type (important for routing!)
+        "source": "inventory-system/cosmos-db",
+        "data": { ... }
+    }
+    
+    # Publish to Event Grid Topic
+    event_grid_event.set(json.dumps([event]))
+```
+**What happens:**
+
+1. Function creates event of type Inventory.ItemNeedsReview
+2. Azure Functions runtime sends HTTP POST to Event Grid Topic endpoint
+3. Event Grid Topic receives and stores the event
+4. Event Grid begins routing process
+
+**3. Event Grid Subscription (Routing Rule):**
+A configuration that tells Event Grid that, "when event X happens, route to endpoint Y".  
+Terraform configuration example:
 ```hcl
-included_event_types = ["Inventory.ItemNeedsReview"]  #  Filter
+# terraform/eventgrid-subscriptions.tf
+resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
+  name  = "item-needs-review-notification"
+  scope = azurerm_eventgrid_topic.inventory_events.id   #  Which Topic to monitor
+  included_event_types = ["Inventory.ItemNeedsReview"]  # Only route these event types
+  event_delivery_schema = "CloudEventSchemaV1_0"        # Adhere to EventGrid event type
+  
+  # Destination: Where to send matching events
+  webhook_endpoint {
+    url = "https://my-function-app.azurewebsites.net/runtime/webhooks/eventgrid?functionName=SendAdminNotification"
+  }
+}
+```
+This configures:
+- **Source:** Event Grid Topic `inventory-events`
+- **Filter:** Only events of type `Inventory.ItemNeedsReview`
+- **Destination:** Webhook to notification through url webhook
+
+**4. Subscriber (Event Consumer):**
+A function that receives events FROM Event Grid via webhook.  
+Subscriber function example: 
+```python
+import azure.functions as func
+import logging
+
+app = func.FunctionApp()
+
+
+@app.function_name(name="SendAdminNotification")
+@app.event_grid_trigger(arg_name="event")  # ← Event Grid trigger, no explicit config needed!
+def send_admin_notification(event: func.EventGridEvent):
+    # Process the event
+    logging.info(f"Received event: {event.event_type}")
+    data = event.get_json().get('data', {})
+    # ... handle notification
 ```
 In this project, we filter on two different events, but for three subscribers:
 - ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
@@ -226,3 +302,11 @@ You should now be able to observe the document created in the Cosmos DB Data exp
 ### Test script 
 I have added a script for testing uploads: `./test_upload.sh`. This script will use the Azure CLI and upload an image to the Azure Blob Storage, and thus trigger the 
 azure function to create a new item document, and upload it to the Cosmos DB. 
+
+
+I highly suggest that iteratively add configurations to your `local.settings.json`. It is an excellent way of 
+debugging and figuring out how everything ties together from your local machine, while using real provisioned Azure Resources.
+
+
+### Read more about the Cloud events here:
+https://learn.microsoft.com/en-us/azure/event-grid/cloud-event-schema

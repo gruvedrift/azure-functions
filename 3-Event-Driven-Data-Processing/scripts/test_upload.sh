@@ -10,8 +10,8 @@
 STORAGE_ACCOUNT=$(cd ../terraform && terraform output --raw storage_account_name)
 
 az storage blob upload \
-  --account-name $STORAGE_ACCOUNT \
+  --account-name "$STORAGE_ACCOUNT" \
   --container-name item-uploads \
-  --name "Glimmer-Cape.png" \
-  --file ../items/Glimmer-Cape.png \
+  --name "Witch-Blade.png" \
+  --file ../items/Witch-Blade.png \
   --overwrite true

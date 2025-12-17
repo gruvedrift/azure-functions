@@ -15,3 +15,17 @@ output "storage_account_name" {
   description = "Azure storage account name, used for Azure CLI to upload images"
   value       = azurerm_storage_account.functions-storage.name
 }
+
+# Event grid related outputs, used for local testing
+output "eventgrid_topic_endpoint" {
+  sensitive   = false
+  description = "Webhook endpoint on which to publish events"
+  value       = azurerm_eventgrid_topic.item_inventory_events.endpoint
+}
+
+output "eventgrid_topic_key" {
+  sensitive   = true
+  description = "Access key for pushing topics to Event Grid"
+  value       = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
+}
+
