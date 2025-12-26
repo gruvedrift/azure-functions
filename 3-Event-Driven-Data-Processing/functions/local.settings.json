@@ -2,5 +2,9 @@
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
+    "CosmosDbConnectionString": "",
+    "AzureWebJobsStorage": "",
+    "EventGridTopicEndpoint": "",
+    "EventGridTopicKey": ""
   }
 }

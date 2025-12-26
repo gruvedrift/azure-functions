@@ -307,7 +307,7 @@ For detailed output, run func with --verbose flag.
 [2025-12-16T09:18:30.644Z] Executed 'Functions.ProcessItemUpload' (Succeeded, Id=569b1ccd-0767-4f46-a14a-e4838b7e48fa, Duration=1178ms)
 ```
 
-You should now be able to observe the document created in the Cosmos DB Data explorer
+You should now be able to observe the documents created in the Cosmos DB Data explorer
 ![img](./img/cosmos-db-document.png)
 
 
