@@ -3,6 +3,12 @@
 # Note: These connect Event Grid to Function App webhooks
 # ========================================================
 
+# Get the Event Grid system key from Function App
+data "azurerm_function_app_host_keys" "functions_keys" {
+  name                = azurerm_linux_function_app.functions-app.name
+  resource_group_name = azurerm_resource_group.functions-group.name
+}
+
 # Subscription: Item needs review -> Admin Notification Function
 resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
   name                 = "item-needs-review-notification"
@@ -13,10 +19,10 @@ resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
 
   # Route to Azure Function through webhook.
   # This is a direct URL -> to the running function within the Function Application.
+  # Must also provide the System Key for authenticated connection!
   webhook_endpoint {
-    url = "https://${azurerm_linux_function_app.functions-app.default_hostname}/runtime/webhooks/eventgrid?functionName=SendAdminNotification"
+    url = "https://${azurerm_linux_function_app.functions-app.name}.azurewebsites.net/runtime/webhooks/EventGrid?functionName=SendAdminNotification&code=${data.azurerm_function_app_host_keys.functions_keys.event_grid_extension_config_key}"
+
   }
   depends_on = [azurerm_linux_function_app.functions-app]
 }
-
-# TODO create a two step deployment script so that azure functions are published BEFORE we create the event grid subscription!

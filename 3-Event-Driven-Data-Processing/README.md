@@ -3,9 +3,22 @@
 
 ### TODO 
 - Document Event Grid Topics better, should be a small section
-- 
+- Write about how to use the webhook with systemkey and that, Private Endpoints would be the better production solution
 
 
+
+### How Events Types ties everything together for Event Grid Publisher / Subscribers:
+
+```python
+if item_document['status'] == "pending_admin_review":
+    event_type = "Inventory.ItemNeedsReview"  
+```
+`event_type` is the routing key for Event Grid subscriptions. Your subscription filters on this:
+```hcl
+included_event_types = ["Inventory.ItemNeedsReview"]  # <- Must match exactly!
+```
+Event Grid uses this string to decide which subscribers receive the event. Custom event types can be any string you choose,
+just ensure publishers and subscribers agree on the naming convention.
 
 ### Service Bus vs Event Grid 
 Complementary not replacements,  
@@ -39,7 +52,7 @@ Publisher → Event Grid → Subscriber 1
 How they could work together: 
 **Common pattern** 
 - Event grid: "new order created" (broadcast notification)
-- Service bus: "process order 123" ( work the item with retry ) // todo what is the item here
+- Service bus: "process order 123" ( work the item with retry ) // nodo what is the item here
 
 ### Semi-BIS Terraform file structure: 
 ## File Structure Summary
@@ -77,7 +90,6 @@ Used for holding documents created by function and followup by administrator
 
 Everything will be automatic, the "user" just uploads an image and everything else happens
 
-// TODO make this better, but it is overall the correct architecture
 ```mermaid
 graph TD
     Upload[Uploads Image<br/>Messerschmidts-Reaver.png]
@@ -239,7 +251,7 @@ Purpose: Collect metrics about inventory for dashboards and reports.
 
 Other stuff to do: 
 - Error handling and Retry policies : Blob trigger  (poison blob after max number of retries `host.json`)
-- Cosmos DB trigger (retries from last checkpoint) // TODO find out what this means
+- Cosmos DB trigger (retries from last checkpoint) 
 - Event grid: dead letter destination for failures, built-in retry with exponential backoff. ( configure in event grid subscription )  
 
 
@@ -253,7 +265,7 @@ Other stuff to do:
 ### Extra infrastructure needed 
 - event grid topic 
 - event subscription 
-- storage containers ( item uploads, item thumbnail, items, leases - for change feed??)
+- storage containers ( item uploads, item thumbnail, items, leases - for change feed)
 - 
 
 
@@ -308,5 +320,57 @@ I highly suggest that iteratively add configurations to your `local.settings.jso
 debugging and figuring out how everything ties together from your local machine, while using real provisioned Azure Resources.
 
 
+In order for eventgrid subscriptions to be able to connect, we need the azure functions to be deployed and running.   
+This is so that the subscriptions are able to connect through the webhook. To solve this, we do deployment in three steps: 
+1) Provision infrastructure 
+2) Deploy Azure Functions
+3) Create and connect Event Grid Subscriptions
+Everything is automated, so the only steps necessary is to run the `up.sh` script.
+
 ### Read more about the Cloud events here:
 https://learn.microsoft.com/en-us/azure/event-grid/cloud-event-schema
+
+## Key Learning Questions:
+
+### How do different data operation triggers handle high-frequency events?
+**Cosmos DB Change Feed:**  
+Uses a checkpoint based system with lease containers to track processing progress across multiple function instances. When events 
+arrive rapidly, Azure Functions automatically scales out by creating new instances, whith each instance claiming leasis on different 
+partition ranges to process changes in parallel.  
+
+**Blob Triggers:**  
+Use a polling mechanism that scans container content periodically (10 seconds by default), which can cause missed 
+events under high load. They are not recommended for high-frequency scenarios.
+
+**Event Triggers:**  
+Handles high-frequency events through built inn trottling and delivery retry policies, automatically batching events when 
+possible and distributing them across scaled function instances.
+
+**Service Bus Triggers:**  
+Provides the most control through configurable prefetch count and max concurrent call settings. This allows for balancing 
+throughput with processing reliability. You can also configure session-enabled queues and force sequential processing 
+even under high load.
+
+### What's the difference between Blob triggers and Event Grid triggers for blob events?
+
+**Blob Triggers** works by polling. The Azure Function scans storage containers periodically looking for new or modified files.
+This introduces some latency, which can result in missed triggers for rapid successive uploads. This polling mechanism 
+is therefore not reliable for time-sensitive scenarios.  
+
+**Event Grid Triggers for Blob events** are truly event driven. The **Storage Account** immediately emits events when blobs are 
+created, modified or deleted. The **Event Grid** delivers these events to your functions within seconds, and with guarantied delivery.
+Event Grid costs per event but provides near real-time processing across multiple storage account in different subscriptions and includes filtering 
+options for routing specific blob events to your functions. Event Grid is the recommended approach if a workload requires reliable timely blob processing.
+
+### How can you ensure exactly-once processing when functions are triggered by data changes?
+
+**Idempotency** is the primary strategy. Design your functions so that processing the same event multiple times produce the same result.
+One way is to check if the operation is already completed, for example by querying the Cosmos DB for existing document with the same event's ID.
+
+**Cosmos DB** provides **optimistic concurrency** through ETags. When updating documents, include the `if-match` header with the document's ETag to ensure 
+updates only succeeds if no one else modified it.
+
+**Service Bus** offers duplicate detection through message IDs and session-enabled queues for guaranteed in-order processing within a session.
+The combination of idempotent operations and explicit deduplication checks ensures reliable and exactly-once semantics 
+even when Azure Functions "at-least-once" delivery guarantee causes retries.
+

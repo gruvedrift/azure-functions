@@ -1,3 +1,15 @@
+output "resource_group_name" {
+  sensitive   = false
+  description = "Resource group name, necessary for most azure cli commands"
+  value       = azurerm_resource_group.functions-group.name
+}
+
+output "function_app_name" {
+  sensitive   = false
+  description = "Function app name, necessary for pushing azure functions to function app"
+  value       = azurerm_linux_function_app.functions-app.name
+}
+
 output "cosmos_db_connection_string" {
   sensitive   = true
   description = "Connection string for read / write to cosmos DB document database"
@@ -28,4 +40,3 @@ output "eventgrid_topic_key" {
   description = "Access key for pushing topics to Event Grid"
   value       = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
 }
-

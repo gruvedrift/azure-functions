@@ -62,7 +62,7 @@ def process_item_upload(
         "name": item_name,
 
         # Actual URL to item in database?
-        "imageUrl": f"item-uploads/{item_filename}.png",
+        "imageUrl": f"item-uploads/{item_filename}",
 
         # Image metadata
         "metadata": {
@@ -126,8 +126,9 @@ def on_item_document_change(
     Detects changes in Cosmos DB and publishes appropriate event onto Event Grid.
     Triggered automatically whenever a new document is created or an existing one is updated.
 
-    TODO // check if there can actually be sendt more than one document
-    Iterating over multiple documents if a whole list of documents are batch sendt.
+    Azure Functions will group multiple documents together if they change within a small time-window,
+    especially if they are within the same partition. We should therefore iterate over
+    multiple documents and support this feature.
     """
     logging.info("Function triggered from change in Cosmos DB")
     if documents:
@@ -137,11 +138,9 @@ def on_item_document_change(
 
 
             if item_document['status'] == "pending_admin_review":
-                # TODO check what this is connected to
                 event_type = "Inventory.ItemNeedsReview"
                 logging.info(f"Publishing: review required")
             elif item_document['status'] == "approved":
-                # TODO check what this is connected to
                 event_type = "Inventory.ItemApproved"
                 logging.info(f"Publishing event: approved")
             else:
@@ -149,8 +148,7 @@ def on_item_document_change(
                 continue
 
             # Create event for Event Grid
-            # TODO can this event be anything?
-            # Cloud event type event, all the top level parameters are mandatory
+            # Cloud event type event, all the top level parameters are mandatory, except subject, time and data.
             event = {
                 "specversion": "1.0",
                 "id": str(uuid.uuid4()),
