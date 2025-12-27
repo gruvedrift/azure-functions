@@ -69,24 +69,13 @@ terraform/
 ```
 
 ### storage.tf 
-Used for image uploads and holding images
+Holds storage infrastructure for Storage Account and: 
+- Item image uploads .png (Blob Container)
+- Store catalogue .json (Blob Container)
+- Price history (Table Storage)
 
 ### cosmosdb.tf
 Used for holding documents created by function and followup by administrator
-
-### Overall project: 
-1. upload item image
-2. Blob trigger function ( automatically ) 
-   1. Resize image (thumbnail + full image )
-   2. Extract medata from filename
-   3. Save to cosmos DB ( item listing)
-   4. Save resized image back to blob
-3. Cosmos DB change Feed Trigger (automatic)
-   1. Publish to evnt grid "item-created" event
-   2. Update search index 
-   3. Send notification queue 
-4. Event Grid trigger function (automatic)
-   1. Send mail to admin: "item x needs stats!"
 
 Everything will be automatic, the "user" just uploads an image and everything else happens
 
@@ -105,19 +94,18 @@ graph TD
     AdminEmail -->|Admin reviews|AdminAPI[Admin API Function:</br><br/>PATCH /admin/items/id<br/><br/>Updates:<br/>- price<br/>- stats<br/>- description<br/>- status: approved]
     AdminAPI -->|Update|CosmosDB
 
-    %% Update Search Index
-    EventGrid -->|ItemApproved|SearchIndex[Event Grid Trigger:<br/>UpdateSearchIndex]
-    EventGrid -->|ItemApproved|Analytics[Event Grid Trigger:<br/>TrackItemAnalytics]
+    %% Add item to store catalog 
+    EventGrid -->|ItemApproved|StoreCatalogue[Event Grid Trigger:<br/>UpdateStoreCatalogue]
+    EventGrid -->|ItemApproved|PriceTable[Event Grid Trigger:<br/>PriceHistoryEntry]
 
-    SearchIndex -->|Write to|SearchTable[(Table Storage<br/>SearchIndex)]
-    Analytics -->|Write to|AnalyticsTable[(Table Storage<br/>InventoryAnalytics)]
+    StoreCatalogue -->|Write to|StoreCatalogueBlob[(Blob Storage:<br/>Item Catalogue)]
+    PriceTable -->|Write to|PriceHistoryTable[(Table Storage:<br/>Price History)]
 ```
 note: we are not sending email in this example, but you get the gist of it.
-### 
-Subscriptions: 
-- Consumer Function for Item in need for review.
-- Consumer Update search index? 
-- Consumer Update Inventory Analytics.
+### Subscriptions: 
+- ItemNeedsReview &rarr; Notification to admin.
+- ItemApproved &rarr; Update Store Catalogue with new item for sale.
+- ItemApproved &rarr; Store Price History for item in table storage. 
 
 
 ## Event Grid Subscriptions:
@@ -220,15 +208,7 @@ def send_admin_notification(event: func.EventGridEvent):
 ```
 In this project, we filter on two different events, but for three subscribers:
 - ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
-- ItemApproved event &rarr; Goes to UpdateSearchIndex + InventoryAnalytics
-
-
-#### Update search index: 
-Purpose: Make approved items searchable. Cosmos DB is great for storing data, but not optimized for text search. This is why we want a **search-optimized index**
-
-#### Track item analysis: 
-Purpose: Collect metrics about inventory for dashboards and reports. 
-- How many items created this week / month
+- ItemApproved event &rarr; Goes to UpdateItemCatalogue + ItemPriceHistory
 
 ## implementation plan: 
 
@@ -245,8 +225,7 @@ Purpose: Collect metrics about inventory for dashboards and reports.
    1) Event Grid trigger (react to system events)  
    2) Multiple subscribers to same event 
    3) Loose coupling 
-4) Update search index on the same event. 
-5) Analytics tracking also? All these three could happen on the same event
+4) Update item catalogue, and price history on the same `ItemApproved` event.
 
 
 Other stuff to do: 
