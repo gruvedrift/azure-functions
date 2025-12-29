@@ -22,8 +22,8 @@ app = func.FunctionApp()
     connection="CosmosDbConnectionString"  # Reference in Application settings with connection string
 )
 def process_item_upload(
-        item_upload: func.InputStream,
-        item_document: func.Out['str'],
+    item_upload: func.InputStream,
+    item_document: func.Out['str'],
 ):
     """
     - Triggers on image upload to Blob Storage
@@ -129,6 +129,7 @@ def on_item_document_change(
     Azure Functions will group multiple documents together if they change within a small time-window,
     especially if they are within the same partition. We should therefore iterate over
     multiple documents and support this feature.
+    This is our PUBLISHER event, and the EventGrid event can hold whatever information we would like to.
     """
     logging.info("Function triggered from change in Cosmos DB")
     if documents:

@@ -1,7 +1,6 @@
 # =============================================================================
 # Event Grid Topic
-# Note: Event Grid Subscriptions will be created before the Function app
-#       so we can reference the webhook endpoints within our Function config.
+# Note: Event Grid Subscriptions will be created after the Function app
 # =============================================================================
 
 resource "azurerm_eventgrid_topic" "item_inventory_events" {

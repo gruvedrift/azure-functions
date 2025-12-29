@@ -20,6 +20,10 @@ included_event_types = ["Inventory.ItemNeedsReview"]  # <- Must match exactly!
 Event Grid uses this string to decide which subscribers receive the event. Custom event types can be any string you choose,
 just ensure publishers and subscribers agree on the naming convention.
 
+In very simple terms. Some pice of code or resource creates an event, pushes it onto the event grid. We then 
+define Event Grid subscriptions which listens for the particular event. The subscriber then routes / calls another 
+azure function through a webhook endpoint, which runs another piece of code. 
+
 ### Service Bus vs Event Grid 
 Complementary not replacements,  
 
@@ -69,9 +73,9 @@ terraform/
 ```
 
 ### storage.tf 
-Holds storage infrastructure for Storage Account and: 
+Holds storage infrastructure for
 - Item image uploads .png (Blob Container)
-- Store catalogue .json (Blob Container)
+- Store catalog .json (Blob Container)
 - Price history (Table Storage)
 
 ### cosmosdb.tf
@@ -95,16 +99,16 @@ graph TD
     AdminAPI -->|Update|CosmosDB
 
     %% Add item to store catalog 
-    EventGrid -->|ItemApproved|StoreCatalogue[Event Grid Trigger:<br/>UpdateStoreCatalogue]
+    EventGrid -->|ItemApproved|StoreCatalog[Event Grid Trigger:<br/>UpdateStoreCatalog]
     EventGrid -->|ItemApproved|PriceTable[Event Grid Trigger:<br/>PriceHistoryEntry]
 
-    StoreCatalogue -->|Write to|StoreCatalogueBlob[(Blob Storage:<br/>Item Catalogue)]
+    StoreCatalog -->|Write to|StoreCatalogBlob[(Blob Storage:<br/>Item Catalog)]
     PriceTable -->|Write to|PriceHistoryTable[(Table Storage:<br/>Price History)]
 ```
 note: we are not sending email in this example, but you get the gist of it.
 ### Subscriptions: 
 - ItemNeedsReview &rarr; Notification to admin.
-- ItemApproved &rarr; Update Store Catalogue with new item for sale.
+- ItemApproved &rarr; Update Store Catalog with new item for sale.
 - ItemApproved &rarr; Store Price History for item in table storage. 
 
 
@@ -199,7 +203,7 @@ app = func.FunctionApp()
 
 
 @app.function_name(name="SendAdminNotification")
-@app.event_grid_trigger(arg_name="event")  # ← Event Grid trigger, no explicit config needed!
+@app.event_grid_trigger(arg_name="event")  # <- Event Grid trigger, no explicit config needed!
 def send_admin_notification(event: func.EventGridEvent):
     # Process the event
     logging.info(f"Received event: {event.event_type}")
@@ -208,7 +212,7 @@ def send_admin_notification(event: func.EventGridEvent):
 ```
 In this project, we filter on two different events, but for three subscribers:
 - ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
-- ItemApproved event &rarr; Goes to UpdateItemCatalogue + ItemPriceHistory
+- ItemApproved event &rarr; Goes to UpdateItemCatalog + ItemPriceHistory
 
 ## implementation plan: 
 
@@ -225,7 +229,7 @@ In this project, we filter on two different events, but for three subscribers:
    1) Event Grid trigger (react to system events)  
    2) Multiple subscribers to same event 
    3) Loose coupling 
-4) Update item catalogue, and price history on the same `ItemApproved` event.
+4) Update item catalog, and price history on the same `ItemApproved` event.
 
 
 Other stuff to do: 
