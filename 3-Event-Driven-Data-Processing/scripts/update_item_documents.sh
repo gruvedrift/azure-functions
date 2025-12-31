@@ -16,8 +16,8 @@ pip3 install -r requirements.txt
 
 if [ -n "$1" ]; then
   echo ""
-  python3 ./test.py "$1"
+  python3 ./update_item_document.py "$1"
 else
   echo ""
-  python3 ./test.py
+  python3 ./update_item_document.py
 fi

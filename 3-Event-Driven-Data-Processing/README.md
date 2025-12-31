@@ -367,5 +367,3 @@ even when Azure Functions "at-least-once" delivery guarantee causes retries.
 
 ## TODO: describe full flow with scripts running + screenshots from outputs 
 ## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
-## TODO: let claude do review of the inner readme 
-## TODO: Update the outer README with information just like the one that I already have on GITHUB

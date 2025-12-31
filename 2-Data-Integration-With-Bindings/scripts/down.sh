@@ -3,7 +3,7 @@
 set -e
 
 echo "Deleting Azure resources..."
-cd ./terraform
+cd ../terraform
 terraform destroy -auto-approve
 
 echo ""

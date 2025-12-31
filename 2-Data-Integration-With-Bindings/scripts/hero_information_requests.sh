@@ -2,7 +2,7 @@
 
 set -e
 
-FUNCTION_URL=$(cd terraform && terraform output -raw function_app_url)
+FUNCTION_URL=$(cd ../terraform && terraform output -raw function_app_url)
 
 # Query some heroes:
 curl "$FUNCTION_URL/api/analytics/hero-information/1"

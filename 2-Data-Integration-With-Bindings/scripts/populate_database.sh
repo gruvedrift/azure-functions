@@ -2,11 +2,11 @@
 
 set -e
 
-cd ./terraform
+cd ../terraform
 
 
 # Needed for using the Azure Cosmos DB SQL API client library for Python!
-pip install azure-cosmos
+pip3 install azure-cosmos
 
 COSMOS_DB_CONNECTION_STRING=$(terraform output --raw cosmos_db_connection_string)
 COSMOS_DATABASE_NAME=$(terraform output --raw cosmos_database_name)
@@ -16,4 +16,4 @@ export COSMOS_DB_CONNECTION_STRING
 export COSMOS_DATABASE_NAME
 export COSMOS_CONTAINER_NAME
 
-python3 ../populate_database.py
+python3 ../scripts/populate_database.py

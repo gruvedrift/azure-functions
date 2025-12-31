@@ -87,7 +87,7 @@ After deployment, all four functions should be visible in the Azure Portal under
 
 ![image](./img/azure-functions.png)
 
-You can now use `curl` or browser to trigger the newly created Azure Function!  
+You can use `curl` or browser to trigger the newly created Azure Function!  
 You will also be able to observe the timer triggered azure function running every 5 minutes in the metrics log and
 follow live logging by entering the `log` tab
 within each function:
@@ -131,6 +131,13 @@ In order to test the `Webhook` simply `curl` with the appropriate request body:
 3. **Past Due Detection** - Know if execution was missed
 
 ### General note on Storage and Triggers
+
+The Storage Account is a vital part of Azure Functions, it stores:
+1. **Function code** (in a blob container called `azure-webjob-hosts`)
+2. **Function secrets and keys** (encrypted)
+3. **Execution logs** (for monitoring)
+4. **Queue/Blob/Table trigger metadata**
+5. **Durable function state** (for function pipelines)
 
 **Triggers that need storage:**
 
@@ -294,7 +301,7 @@ the `CLI-COMMANDS.md` reference file.✨
 2. Store keys in environment variables
 3. Rotate keys periodically; regenerate every 90 days, or when team members leave.
 4. Use different keys for different clients. Create custom keys per client/application, it is very easy to revoke keys!
-5. Never commit keys to Git (julegr0t)
+5. Never commit keys to Git (julegr0et)
 6. Use headers over query strings
 
 ```bash
