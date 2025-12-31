@@ -30,6 +30,6 @@ resource "azurerm_storage_container" "store_catalog" {
 # Table Storage - Table for tracking price history
 # =================================================
 resource "azurerm_storage_table" "price_history" {
-  name                 = "itempricehistory"
+  name                 = "ItemPriceHistory"
   storage_account_name = azurerm_storage_account.functions-storage.name
 }

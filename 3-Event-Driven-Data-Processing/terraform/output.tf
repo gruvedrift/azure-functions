@@ -16,6 +16,18 @@ output "cosmos_db_connection_string" {
   value       = azurerm_cosmosdb_account.bindings_cosmos_account.primary_sql_connection_string
 }
 
+output "cosmos_endpoint" {
+  sensitive   = false
+  description = "Required together with key in order to use the Python SDK for document Read / Update"
+  value       = azurerm_cosmosdb_account.bindings_cosmos_account.endpoint
+}
+
+output "cosmos_account_name" {
+  sensitive   = false
+  description = "Cosmos DB account name, necessary for Azure CLI operations"
+  value       = azurerm_cosmosdb_account.bindings_cosmos_account.name
+}
+
 output "storage_connection_string" {
   sensitive   = true
   description = "Connection string for function trigger on image upload to blob storage"

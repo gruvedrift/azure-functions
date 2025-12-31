@@ -310,6 +310,13 @@ This is so that the subscriptions are able to connect through the webhook. To so
 3) Create and connect Event Grid Subscriptions
 Everything is automated, so the only steps necessary is to run the `up.sh` script.
 
+
+When everything is provisioned, run the `.test_upload.sh` script to upload 5 .png images and trigger the first 
+event grid event: `ItemNeedsReview`.
+Once that is done, you can run the `update_item_documents.sh`. It takes 0 or 1 argument:  
+0: Returns Document Id's from CosmosDB `inventorydb` container `items`.
+1: Updates an item with some preset values, you can change these as you wish in the `update_item.py` script.
+
 ### Read more about the Cloud events here:
 https://learn.microsoft.com/en-us/azure/event-grid/cloud-event-schema
 
@@ -357,3 +364,8 @@ updates only succeeds if no one else modified it.
 The combination of idempotent operations and explicit deduplication checks ensures reliable and exactly-once semantics 
 even when Azure Functions "at-least-once" delivery guarantee causes retries.
 
+
+## TODO: describe full flow with scripts running + screenshots from outputs 
+## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
+## TODO: let claude do review of the inner readme 
+## TODO: Update the outer README with information just like the one that I already have on GITHUB

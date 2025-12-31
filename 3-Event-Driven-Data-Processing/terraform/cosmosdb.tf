@@ -45,7 +45,7 @@ resource "azurerm_cosmosdb_sql_database" "inventory_db" {
   account_name        = azurerm_cosmosdb_account.bindings_cosmos_account.name
 }
 
-# Items container
+# Items container - "table"
 resource "azurerm_cosmosdb_sql_container" "items_container" {
   name                = "items"
   resource_group_name = azurerm_resource_group.functions-group.name
@@ -54,7 +54,7 @@ resource "azurerm_cosmosdb_sql_container" "items_container" {
   partition_key_paths = ["/id"] # Partition key
 }
 
-# Leases container for progress tracking
+# Leases container for progress tracking - "table"
 resource "azurerm_cosmosdb_sql_container" "leases" {
   name                = "leases"
   resource_group_name = azurerm_resource_group.functions-group.name

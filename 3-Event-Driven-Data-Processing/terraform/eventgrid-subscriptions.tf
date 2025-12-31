@@ -31,7 +31,7 @@ resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
 resource "azurerm_eventgrid_event_subscription" "item_approved_store_catalog" {
   name                 = "item-approved-catalog-update"
   scope                = azurerm_eventgrid_topic.item_inventory_events.id
-  included_event_types = ["Iventory.ItemApproved"]
+  included_event_types = ["Inventory.ItemApproved"]
 
   event_delivery_schema = "CloudEventSchemaV1_0" # Adhere to EventGrid event type
   webhook_endpoint {

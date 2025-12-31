@@ -43,13 +43,20 @@ you pay only for those active processing moments / compute time.
 ---
 
 ## 1. Iteration - Function App Creation and Basic Triggers:
+**Syllabus Coverage:** Create and configure Azure Functions app. Implement triggers (data operations, timers, webhooks).
+Learn storage requirements for stateful triggers, cold starts, and the differences between trigger types.
 
-* **Create and configure Azure Function Apps** - Provision Function Apps, App Service Plans, Storage Accounts, and Application Insights using Terraform.
-* **Implement HTTP-triggered functions** - Build interactive endpoints responding to user requests with real-time responses.
-* **Create timer-triggered functions** - Configure scheduled execution using CRON expressions for automated tasks.
-* **Add webhook-triggered functions** - Implement event notification receivers following a *fire-and-forget* pattern for external system integration.
-* **Configure function-level security** - Implement authentication with access keys (`ANONYMOUS`, `FUNCTION` and `ADMIN` levels) and manage key rotation via Azure CLI.
-* **Understand trigger execution patterns** - Learn storage requirements for stateful triggers, cold starts, and the differences between trigger types.
+**Implementation:**
+* Provision Function App, App Service Plan, Storage Account, and Application Insights with Terraform.
+* HTTP-triggered function for synchronous real-time request/response patterns.
+* Timer-triggered function with CRON expressions for scheduled execution.
+* Webhook-triggered function for external event notification (fire-and-forget pattern) for external system integration.
+* Function-level security configuration through access keys  (`Anonymous`, `Function` and `Admin` levels). 
+* Access key management and rotation via Azure CLI.
+
+**Technologies:** Azure Functions (Consumption plan), HTTP triggers, Timer triggers, Application Insights  
+
+**Architecture Pattern:** Request-response and scheduled execution
 
 ---
 

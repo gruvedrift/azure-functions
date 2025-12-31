@@ -13,17 +13,18 @@ app = func.FunctionApp()
 @app.blob_trigger(
     arg_name="item_upload",
     path="item-uploads/{itemName}",
-    connection="AzureWebJobsStorage"       # References the Application settings with storage connection string ( Variable -> Variable -> connection string )
+    connection="AzureWebJobsStorage"
+    # References the Application settings with storage connection string ( Variable -> Variable -> connection string )
 )
 @app.cosmos_db_output(
     arg_name="item_document",
-    database_name="inventorydb",           # References the Cosmos DB name
-    container_name="items",                # References the Cosmos DB sql container name
+    database_name="inventorydb",  # References the Cosmos DB name
+    container_name="items",  # References the Cosmos DB sql container name
     connection="CosmosDbConnectionString"  # Reference in Application settings with connection string
 )
 def process_item_upload(
-    item_upload: func.InputStream,
-    item_document: func.Out['str'],
+        item_upload: func.InputStream,
+        item_document: func.Out['str'],
 ):
     """
     - Triggers on image upload to Blob Storage
@@ -107,20 +108,20 @@ def process_item_upload(
 @app.function_name(name="OnItemDocumentChange")
 @app.cosmos_db_trigger(
     arg_name="documents",
-    database_name="inventorydb",             # References Cosmos DB Database
-    container_name="items",                  # References Cosmos DB Container, which is essentially the same as a table
-    connection="CosmosDbConnectionString",   # Connectivity type
-    lease_container_name="leases",           # Progress tracking and fallback points for failing functions
+    database_name="inventorydb",  # References Cosmos DB Database
+    container_name="items",  # References Cosmos DB Container, which is essentially the same as a table
+    connection="CosmosDbConnectionString",  # Connectivity type
+    lease_container_name="leases",  # Progress tracking and fallback points for failing functions
 )
 @app.event_grid_output(
     arg_name="event_grid_event",
     topic_endpoint_uri="EventGridTopicEndpoint",  # Reference to Application settings variable
-    topic_key_setting="EventGridTopicKey",        # Reference to Application setting variable
+    topic_key_setting="EventGridTopicKey",  # Reference to Application setting variable
 
 )
 def on_item_document_change(
-    documents: func.DocumentList,
-    event_grid_event: func.Out[str]
+        documents: func.DocumentList,
+        event_grid_event: func.Out[str]
 ):
     """
     Detects changes in Cosmos DB and publishes appropriate event onto Event Grid.
@@ -137,37 +138,53 @@ def on_item_document_change(
             item_document = json.loads(doc.to_json())
             logging.info(f"Change detected: {item_document['name']}, status: {item_document['status']}")
 
-
             if item_document['status'] == "pending_admin_review":
                 event_type = "Inventory.ItemNeedsReview"
                 logging.info(f"Publishing: review required")
-            elif item_document['status'] == "approved":
-                event_type = "Inventory.ItemApproved"
-                logging.info(f"Publishing event: approved")
-            else:
-                logging.info(f"Unknown document status, skipping...")
-                continue
 
-            # Create event for Event Grid
-            # Cloud event type event, all the top level parameters are mandatory, except subject, time and data.
-            event = {
-                "specversion": "1.0",
-                "id": str(uuid.uuid4()),
-                "type": event_type,
-                "source": "inventory-system/cosmos-db",
-                "subject": f"items/{item_document['id']}",
-                "time": datetime.utcnow().isoformat(),
-                "data": {
+                # Minimal data for item review notification
+                event_data = {
                     "itemId": item_document['id'],
                     "itemName": item_document['name'],
                     "itemStatus": item_document['status'],
                     "imageUrl": item_document['imageUrl'],
                     "createdAt": item_document.get('createdAt')
-                },
-            }
-            event_grid_event.set(json.dumps([event]))
-            logging.info(f"Event published to Event Grid: {event_type}")
+                }
+            elif item_document['status'] == "approved":
+                event_type = "Inventory.ItemApproved"
+                logging.info(f"Publishing event: approved")
 
+                # Full data for catalog and price history
+                event_data = {
+                    "itemId": item_document['id'],
+                    "itemName": item_document['name'],
+                    "itemStatus": item_document['status'],
+                    "imageUrl": item_document['imageUrl'],
+                    "createdAt": item_document.get('createdAt'),
+                    "cost": item_document.get('cost'),
+                    "sellValue": item_document.get('sellValue'),
+                    "description": item_document.get('description'),
+                    "itemType": item_document.get('itemType'),
+                    "stats": item_document.get('stats', {}),
+                    "reviewedBy": item_document.get('reviewedBy')
+                }
+            else:
+                logging.info(f"Unknown document status, skipping...")
+                continue
+
+        # Create event for Event Grid
+        # Cloud event type event, all the top level parameters are mandatory, except subject, time and data.
+        event = {
+            "specversion": "1.0",
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "inventory-system/cosmos-db",
+            "subject": f"items/{item_document['id']}",
+            "time": datetime.utcnow().isoformat(),
+            "data": event_data,
+        }
+        event_grid_event.set(json.dumps([event]))
+        logging.info(f"Event published to Event Grid: {event_type}")
 
 
 # Event Grid subscriber function
@@ -177,7 +194,8 @@ def send_admin_notification(event: func.EventGridEvent):
     """
     Event Grid subscriber that receives ItemNeedsReview events.
     Logs what action an admin would need to take.
-    In a real world implementation, this function could be responsible for notifications through email, Slack or BrevDue
+
+    In a real world implementation, this function could be responsible for notifications through email, Slack or BrevDue.
     """
     logging.info(f"=" * 80)
     logging.info("Event grid subscriber triggered!")
@@ -239,3 +257,122 @@ def send_admin_notification(event: func.EventGridEvent):
     logging.info(f"After updating, change status to 'approved' to publish item.")
     logging.info(f"Remember to add your username to the 'Reviewed by' section.")
     logging.info(f"")
+
+
+# ApprovedItem Event Subscription function - Item Catalog
+@app.function_name(name="UpdateStoreCatalog")
+@app.event_grid_trigger(arg_name="approved_event")
+@app.blob_input(
+    arg_name="existing_catalog",
+    path="store-catalog/item-catalog.json",
+    connection="AzureWebJobsStorage"
+)
+@app.blob_output(
+    arg_name="updated_catalog",
+    path="store-catalog/item-catalog.json",  # All items written to single catalog file
+    connection="AzureWebJobsStorage"
+)
+def update_store_catalog(
+        approved_event: func.EventGridEvent,
+        existing_catalog: func.InputStream,
+        updated_catalog: func.Out[str]
+):
+    """
+    Maintains a single JSON catalog file with list of all approved items.
+    Appends new items to item list.
+
+    Triggered by: Inventory.ItemApproved events
+    Output: store-catalog/item-catalog.json
+    """
+
+    logging.info("Updating store catalog...")
+
+    # Extract Event data
+    event_json = approved_event.get_json()
+    # Create catalog entry with admin provided item data
+    catalog_item = {
+
+        "id": event_json.get('itemId'),
+        "name": event_json.get('itemName'),
+        "imageUrl": event_json.get('imageUrl'),
+        "cost": event_json.get('cost'),
+        "sellValue": event_json.get('sellValue'),
+        "description": event_json.get('description'),
+        "itemType": event_json.get('itemType'),
+        # Stats
+        "stats": {
+            "intelligence": event_json.get('stats', {}).get('intelligence'),
+            "strength": event_json.get('stats', {}).get('strength'),
+            "agility": event_json.get('stats', {}).get('agility'),
+            "attackDamage": event_json.get('stats', {}).get('attackDamage'),
+            "health": event_json.get('stats', {}).get('health'),
+            "healthRegeneration": event_json.get('stats', {}).get('healthRegeneration'),
+            "mana": event_json.get('stats', {}).get('mana'),
+            "manaRegeneration": event_json.get('stats', {}).get('manaRegeneration')
+        },
+        # Metadata
+        "reviewedBy": event_json.get('reviewedBy'),
+        "approvedAt": datetime.utcnow().isoformat()
+    }
+
+    # Read existing catalog (or create new if doesn't exist)
+    try:
+        catalog_data = existing_catalog.read()
+        if catalog_data:
+            catalog_list = json.loads(catalog_data)
+        else:
+            catalog_list = []
+            logging.info("Creating new catalog (no existing file)")
+    except Exception as e:
+        logging.warning(f"Could not read existing catalog, creating new: {e}")
+        catalog_list = []
+
+    catalog_list.append(catalog_item)
+
+    # Write updated item catalog to Blob Container
+    updated_catalog.set(json.dumps(catalog_list, indent=2))
+    logging.info("")
+    logging.info(f"Item written to catalog: {catalog_item['name']}")
+
+
+# ApprovedItem Event Subscription function - Price History
+@app.function_name(name="RecordPriceHistory")
+@app.event_grid_trigger(arg_name="approved_event")
+@app.table_output(
+    arg_name="price_history",
+    table_name="ItemPriceHistory",  # References Table Storage
+    connection="AzureWebJobsStorage"
+)
+def record_price_history(
+        approved_event: func.EventGridEvent,
+        price_history: func.Out[str],
+):
+    """
+    Records price history for analytics and trend detection.
+    RowKey is mandatory in Azure Table Storage as it is combined with the PartitionKey to create a Primary Key.
+
+    Triggered by: Inventory.ItemApproved events
+    Output: ItemPriceHistory table
+    """
+    logging.info("Recording price history...")
+
+    # Extract event data
+    event_json = approved_event.get_json()
+    item_id = event_json.get('itemId')
+    timestamp = datetime.utcnow().isoformat()
+
+    # Create Table Storage price entity
+    price_entry = {
+        "PartitionKey": item_id,
+        "RowKey": str(uuid.uuid4()),
+        "ItemId": item_id,
+        "ItemName": event_json.get('itemName'),
+        "Cost": event_json.get('cost'),
+        "SellValue": event_json.get('sellValue'),
+        "ReviewedBy": event_json.get('reviewedBy'),
+        "RecordedAt": timestamp,
+    }
+
+    # Write to Table Storage
+    price_history.set(json.dumps(price_entry, indent=2))
+    logging.info(f"Price recorded: {price_entry['ItemName']} - {price_entry['Cost']} gold")
