@@ -119,8 +119,8 @@ def process_item_upload(
 
 )
 def on_item_document_change(
-        documents: func.DocumentList,
-        event_grid_event: func.Out[str]
+    documents: func.DocumentList,
+    event_grid_event: func.Out[str]
 ):
     """
     Detects changes in Cosmos DB and publishes appropriate event onto Event Grid.
@@ -139,7 +139,6 @@ def on_item_document_change(
 
             if item_document['status'] == "pending_admin_review":
                 event_type = "Inventory.ItemNeedsReview"
-                logging.info(f"Publishing: review required")
 
                 # Minimal data for item review notification
                 event_data = {
@@ -151,7 +150,6 @@ def on_item_document_change(
                 }
             elif item_document['status'] == "approved":
                 event_type = "Inventory.ItemApproved"
-                logging.info(f"Publishing event: approved")
 
                 # Full data for catalog and price history
                 event_data = {

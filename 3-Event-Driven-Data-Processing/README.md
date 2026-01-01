@@ -164,7 +164,7 @@ graph TD
 
 ---
 
-## 1. Create Blob Trigger Function (Image Processing)
+## 1. Create Blob Trigger Function for Image Processing 
 
 ### Building overview
 Process uploaded images, validate dimensions, create Cosmos DB stub documents.
@@ -285,11 +285,97 @@ This pattern (Blob trigger &rarr; Validation &rarr; Database) is useful for:
 - Real-time processing requirements (use Event Grid trigger for blobs instead)
 - Small files that fit in memory (HTTP trigger might be simpler)
 
-
 ---
 
+## 2 + 3: Implement Cosmos DB Trigger, Event Grid & Event publishing
 
-### How Events Types ties everything together for Event Grid Publisher / Subscribers:
+### Building overview 
+Function that reacts to document changes in real-time and publish events based on item document status.
+
+### Infrastructure (Terraform)
+This is where things start getting interesting! We will provision an Event Grid, which will be the backbone of our 
+pub/sub and event driven architecture. Later we will create subscribers for our events, but for now we just need the Event Grid resource.
+See `./terraform/eventgrid.tf` for full implementation.
+```hcl
+resource "azurerm_eventgrid_topic" "item_inventory_events" {
+  name                = "${var.event_grid_prefix}${random_string.postfix.result}"
+  location            = azurerm_resource_group.functions-group.location
+  resource_group_name = azurerm_resource_group.functions-group.name
+  input_schema        = "CloudEventSchemaV1_0" # This is the modern standard for Events.
+}
+```
+
+### Implementation
+Now we just need to set up a Python function that triggers on Cosmos DB changes &rarr; creates events based on status.
+This Azure Function will be our **Publisher**, and will create events for our to-be subscribers.  
+The function will create one of two possible events defined in our code: `Inventory.ItemNeedsReview` or `Inventory.ItemApproved`.
+```python
+@app.function_name(name="OnItemDocumentChange")
+@app.cosmos_db_trigger(
+    arg_name="documents",
+    database_name="inventorydb",            # References Cosmos DB Database
+    container_name="items",                 # References Cosmos DB Container, which is essentially the same as a table
+    connection="CosmosDbConnectionString",  # Connectivity type
+    lease_container_name="leases",          # Progress tracking and fallback points for failing functions
+)
+@app.event_grid_output(
+    arg_name="event_grid_event",
+    topic_endpoint_uri="EventGridTopicEndpoint",    # Reference to Application settings variable
+    topic_key_setting="EventGridTopicKey",          # Reference to Application setting variable
+
+)
+def on_item_document_change(
+    documents: func.DocumentList,
+    event_grid_event: func.Out[str]
+):
+    # Determine Event Type based on document status
+    if item_document['status'] == "pending_admin_review":
+        event_type = "Inventory.ItemNeedsReview"
+        # Minimal data for item review notification
+        event_data = {...}
+    elif item_document['status'] == "approved":
+        # Pass document trigger information to event and publish  
+        event_data = {
+            "itemName": item_document['name'],
+            ...
+        }
+
+    # Create Event and publish to Event Grid: 
+    event = {
+        "specversion": "1.0",
+        "id": str(uuid.uuid4()),
+        "type": event_type,
+        "source": "inventory-system/cosmos-db",
+        "subject": f"items/{item_document['id']}",
+        "time": datetime.utcnow().isoformat(),
+        "data": event_data,
+    }
+   event_grid_event.set(json.dumps([event]))
+```
+
+### Key Concepts
+**Cosmos DB Change Feed:**
+- **How it works:** Cosmos DB maintains a sorted log of all document changes (creates, updates, deletes)
+- **Near real-time:** Changes appear in feed within ~1 second
+- **Ordered per partition:** Changes within same partition key are processed in order
+- **Persistent:** Change feed retains history, allowing catch-up processing in the event of failures
+
+**Change Feed vs Traditional Polling:**
+
+| Aspect     | Change Feed                   | Traditional Polling                      |
+|------------|-------------------------------|------------------------------------------|
+| Latency    | <1 second                     | Depends on poll interval                 |
+| Efficiency | Push-based, no wasted queries | Pull-based, queries even when no changes |
+| Ordering   | Guaranteed per partition      | Not guaranteed                           |
+
+
+**Leases container:**  
+
+This is a container that is needed for the change feed trigger to track which items has been processed.
+Its purpose is to track which changes has been processed and which function instance that is processing which partition.
+It works as a checkpoint if a function crashes half-way through processing.
+
+**Event Type routing:**
 
 ```python
 if item_document['status'] == "pending_admin_review":
@@ -302,9 +388,35 @@ included_event_types = ["Inventory.ItemNeedsReview"]  # <- Must match exactly!
 Event Grid uses this string to decide which subscribers receive the event. Custom event types can be any string you choose,
 just ensure publishers and subscribers agree on the naming convention.
 
-In very simple terms. Some pice of code or resource creates an event, pushes it onto the event grid. We then 
-define Event Grid subscriptions which listens for the particular event. The subscriber then routes / calls another 
-azure function through a webhook endpoint, which runs another piece of code. 
+In very simple terms: some pice of code or resource creates an event, pushes it onto the event grid. We then
+define Event Grid subscriptions which listens for the particular event. The subscriber then routes / calls another
+azure function through a webhook endpoint, which runs another piece of code.
+
+### How to Test
+1. Re-run the `up.sh` script for updated infrastructure and re-publishing of Azure Functions.
+2. Run the `test_upload.sh` again to trigger our new Azure Function `OnItemDocumentChange`. For now, it will only create 
+the `Inventory.ItemNeedsReview` event, but it can be clearly observed within the Event Grid resource in Azure Portal:
+![img](./img/event-grid-events.png)
+3. Logs from event publishing can be observed within the Logs tab for our new function: 
+```
+2026-01-01T18:44:32   [Information]   Executed 'Functions.OnItemDocumentChange' (Succeeded, Id=1cf46868-efc9-4fa0-9eb6-2b4b19c19459, Duration=10ms)
+2026-01-01T18:44:42   [Information]   Executing 'Functions.OnItemDocumentChange' (Reason='New changes on container items at 2026-01-01T18:44:41.8946823Z', Id=5eba3b1e-5f50-4590-8568-df544c4f7373)
+2026-01-01T18:44:42   [Verbose]   Sending invocation id: '5eba3b1e-5f50-4590-8568-df544c4f7373
+2026-01-01T18:44:42   [Verbose]   Posting invocation id:5eba3b1e-5f50-4590-8568-df544c4f7373 on workerId:0083d274-bfc2-4d1b-86e0-9fc6f0c8cb35
+2026-01-01T18:44:42   [Information]   Function triggered from change in Cosmos DB
+2026-01-01T18:44:42   [Information]   Change detected: Glimmer Cape, status: pending_admin_review
+2026-01-01T18:44:42   [Information]   Change detected: Scythe Of Vyse, status: pending_admin_review
+2026-01-01T18:44:42   [Information]   Change detected: Witch Blade, status: pending_admin_review
+2026-01-01T18:44:42   [Information]   Event published to Event Grid: Inventory.ItemNeedsReview
+```
+
+### Use Cases
+- Real-time data synchronization
+- Audit trail generation
+- Triggering downstream processes
+
+---
+
 
 ### Semi-BIS Terraform file structure: 
 ## File Structure Summary
@@ -476,13 +588,6 @@ Other stuff to do:
 - storage containers ( item uploads, item thumbnail, items, leases - for change feed)
 
 
-### Leases container: 
-This is a container that is needed for the change feed trigger to track which items has been processed.
-Its purpose is to track which changes has been processed and which function instance that is processing which partition.
-
-It works as a checkpoint if a function crashes half-way through processing.
-
-
 ### Common fail scenarios and outcome: 
 ``` 
 Message has reached MaxDequeueCount of 5. Moving message to queue 'webjobs-blobtrigger-poison'.
@@ -566,70 +671,7 @@ updates only succeeds if no one else modified it.
 The combination of idempotent operations and explicit deduplication checks ensures reliable and exactly-once semantics 
 even when Azure Functions "at-least-once" delivery guarantee causes retries.
 
-
-## TODO: describe full flow with scripts running + screenshots from outputs 
 ## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
-
----
-
-## 2. Implement Cosmos DB Trigger (Change Feed Monitoring)
-
-### What You're Building
-React to document changes in real-time, publish events based on status.
-
-### Implementation
-```python
-[Cosmos trigger + Event Grid output binding]
-```
-
-**Key concepts:**
-- Change Feed vs traditional polling
-- Lease containers for checkpointing
-- Event publishing patterns
-
-### How to Test
-```bash
-python3 scripts/manage_items.py <item-id>  # Approve item
-```
-
-### Expected Output
-[Log showing change detection and event publishing]
-
-### Use Cases
-- Real-time data synchronization
-- Audit trail generation
-- Triggering downstream processes
-
----
-
-## 3. Configure Event Grid Topic and Publishing
-
-### What You're Building
-Central event topic that routes events to multiple subscribers based on type.
-
-### Infrastructure (Terraform)
-```hcl
-[Event Grid topic configuration]
-```
-
-### Event Schema (CloudEvents)
-```python
-[Event structure with all required fields]
-```
-
-**CloudEvents Specification:**
-| Field | Required | Purpose | Example |
-|-------|----------|---------|---------|
-| specversion | ✅ | Schema version | "1.0" |
-| type | ✅ | Event type (routing key) | "Inventory.ItemApproved" |
-| source | ✅ | Event producer | "inventory-system/cosmos-db" |
-| id | ✅ | Unique event ID | uuid |
-| subject | ❌ | Event subject | "items/abc-123" |
-| time | ❌ | Event timestamp | ISO 8601 |
-| data | ❌ | Event payload | {...} |
-
-### How to Test
-[Check Event Grid metrics in portal]
 
 ---
 
