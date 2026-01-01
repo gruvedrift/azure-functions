@@ -14,7 +14,6 @@ app = func.FunctionApp()
     arg_name="item_upload",
     path="item-uploads/{itemName}",
     connection="AzureWebJobsStorage"
-    # References the Application settings with storage connection string ( Variable -> Variable -> connection string )
 )
 @app.cosmos_db_output(
     arg_name="item_document",
@@ -23,8 +22,8 @@ app = func.FunctionApp()
     connection="CosmosDbConnectionString"  # Reference in Application settings with connection string
 )
 def process_item_upload(
-        item_upload: func.InputStream,
-        item_document: func.Out['str'],
+    item_upload: func.InputStream,
+    item_document: func.Out[str],
 ):
     """
     - Triggers on image upload to Blob Storage
@@ -62,7 +61,7 @@ def process_item_upload(
         "id": item_id,
         "name": item_name,
 
-        # Actual URL to item in database?
+        # Actual URL to item in database
         "imageUrl": f"item-uploads/{item_filename}",
 
         # Image metadata

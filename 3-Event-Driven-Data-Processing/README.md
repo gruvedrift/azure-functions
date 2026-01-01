@@ -164,9 +164,130 @@ graph TD
 
 ---
 
-
-
 ## 1. Create Blob Trigger Function (Image Processing)
+
+### Building overview
+Process uploaded images, validate dimensions, create Cosmos DB stub documents.
+
+### Infrastructure (Terraform)
+Required infrastructure can be found in `storage.tf` and `cosmosdb.tf`. Specifically we just need a blob container
+and an item and leases container.
+
+```hcl
+# Blob container for .png images
+resource "azurerm_storage_container" "item_uploads" {
+  name                  = "item-uploads"
+  storage_account_id    = azurerm_storage_account.functions-storage.id
+}
+
+# Cosmos DB sql container for item documents 
+resource "azurerm_cosmosdb_sql_container" "items_container" {
+  name                = "items"
+  database_name       = azurerm_cosmosdb_sql_database.inventory_db.name
+}
+```
+
+### Implementation
+As for triggers, we can use a blob trigger to react to the uploaded images: 
+
+```python
+@app.function_name(name="ProcessItemUpload")
+@app.blob_trigger(
+    arg_name="item_upload",
+    path="item-uploads/{itemName}",
+    connection="AzureWebJobsStorage"
+)
+@app.cosmos_db_output(
+    arg_name="item_document",
+    database_name="inventorydb",            # References the Cosmos DB name
+    container_name="items",                 # References the Cosmos DB sql container name
+    connection="CosmosDbConnectionString"   # Reference in Application settings with connection string
+)
+def process_item_upload(
+    item_upload: func.InputStream,
+    item_document: func.Out[str],
+):
+```
+One a image is uploaded, the input binding trigger will start our python function. In turn, it will create a new "item document"
+with various data and metadata in a JSON format (see implementation in `function_app.py` for details).
+The documents are then uploaded to our provisioned Cosmos DB.
+
+**Document JSON example:**
+```
+{
+    "id": "2d7d7b0a-7d8e-4987-b89e-35d301930b0e",
+    "name": "Witch Blade",
+    "imageUrl": "item-uploads/Witch-Blade.png",
+    "metadata": {
+        "imageHeight": 64,
+        "imageWidth": 88,
+        "imageFormat": "PNG",
+        "filesizeKB": 11.67
+    },
+    // Admin fills these in step 2
+    "cost": null,
+    "sellValue": null,
+    "description": null,
+    "itemType": null,
+    "stats": {...}, // All null initialy
+    // Workflow controll
+    "status": "pending_admin_review",
+    "createdAt": "2026-01-01T17:44:53.94833",
+    "updatedAd": null,
+    "reviewedBy": null,
+```
+
+### Key Concepts
+**Blob Trigger Mechanics:**
+- **Polling interval:** Checks for new blobs every ~10 seconds (not instant)
+- **Binding expression:** `{itemName}` extracts filename from path automatically
+- **InputStream type:** Provides file content as stream, memory-efficient for large files
+- 
+**Document Structure (Stub Pattern):**
+- **Populated fields:** id, name, imageUrl, metadata (from image)
+- **Null fields:** cost, stats, description (filled by admin later)
+- **Status:** `pending_admin_review` (triggers admin notification in next step)
+
+### How to Test
+1. In order to test this function, simply provision infrastructure with the `up.sh` script. This script will also deploy 
+our Azure Functions that are responsible for our business logic and flow.
+2. Once provisioning is done, running the `test_upload.sh` script will upload 5 .png images to the `item-uploads` Blob container
+and thus trigger the flow. `./scripts/test_upload.sh`
+3. Verify that the items are uploaded to Blob storage, you should now be able to see five uploaded PNG images in Azure Portal.
+![img](./img/item-uploads.png)
+4. Check function logs for our azure function `ProcessItemUpload`. You should be able to see the logs within the logs tab:
+```
+2026-01-01T17:44:54   [Information]   Executing 'Functions.ProcessItemUpload' (Reason='New blob detected(LogsAndContainerScan): item-uploads/Witch-Blade.png', Id=b7a6ce8d-a826-4f10-b9a4-b28de503ca9a)
+2026-01-01T17:44:54   [Information]   Trigger Details: MessageId: 1c5d64dd-2d82-4d73-ada6-1aceff8ff4a2, DequeueCount: 1, InsertedOn: 2026-01-01T17:44:53.000+00:00, BlobCreated: 2026-01-01T17:44:46.000+00:00, BlobLastModified: 2026-01-01T17:44:46.000+00:00
+2026-01-01T17:44:54   [Verbose]   Sending invocation id: 'b7a6ce8d-a826-4f10-b9a4-b28de503ca9a
+2026-01-01T17:44:54   [Verbose]   Posting invocation id:b7a6ce8d-a826-4f10-b9a4-b28de503ca9a on workerId:579d87bf-600e-4ad1-9fea-fcf3ea02a31c
+2026-01-01T17:44:54   [Information]   Received upload: <azure.functions.blob.InputStream object at 0x7f48182dfa00>
+2026-01-01T17:44:54   [Information]   Processing upload: item-uploads/Witch-Blade.png
+2026-01-01T17:44:54   [Information]   Item stub created: Witch Blade (ID: 2d7d7b0a-7d8e-4987-b89e-35d301930b0e)
+2026-01-01T17:44:54   [Information]   Status: pending_admin_review
+2026-01-01T17:44:54   [Information]   Image: item-uploads/Witch-Blade.png
+2026-01-01T17:44:54   [Information]   Executed 'Functions.ProcessItemUpload' (Succeeded, Id=b7a6ce8d-a826-4f10-b9a4-b28de503ca9a, Duration=28ms)
+```
+5. Take a peek in the Cosmos DB resource as well, you will see that five documents are uploaded there.
+![img](./img/item-documents.png)
+As you can see, most of the item information is missing, which is expected, as these documents will be changed 
+at a later implementation stage.
+
+### Use Cases
+
+This pattern (Blob trigger &rarr; Validation &rarr; Database) is useful for:
+- **Content moderation systems** - Upload &rarr; scan for inappropriate content &rarr; queue for review
+- **Document processing pipelines** - PDF upload &rarr; extract text &rarr; index for search
+- **Media workflows** - Video upload &rarr; generate thumbnails &rarr; create metadata entry
+- **Data ingestion** - CSV upload &rarr; parse &rarr; validate &rarr; store in database
+
+**When NOT to use:**
+- Real-time processing requirements (use Event Grid trigger for blobs instead)
+- Small files that fit in memory (HTTP trigger might be simpler)
+
+
+---
+
 
 ### How Events Types ties everything together for Event Grid Publisher / Subscribers:
 
@@ -353,7 +474,6 @@ Other stuff to do:
 - event grid topic 
 - event subscription 
 - storage containers ( item uploads, item thumbnail, items, leases - for change feed)
-- 
 
 
 ### Leases container: 
@@ -361,11 +481,6 @@ This is a container that is needed for the change feed trigger to track which it
 Its purpose is to track which changes has been processed and which function instance that is processing which partition.
 
 It works as a checkpoint if a function crashes half-way through processing.
-
-
-### What we will build 
-
-* This is a commit test
 
 
 ### Common fail scenarios and outcome: 
@@ -379,23 +494,6 @@ Message has reached MaxDequeueCount of 5. Moving message to queue 'webjobs-blobt
    - Connection string to the storage account where the function will write documents
 2. Capture them in a script, they are sensitive so we can not see them directly from the Terraform output.
 3. Add them to your `local.settings.json` configuration so that your locally running function can interact with both databases.
-
-Result:   
-``` 
-For detailed output, run func with --verbose flag.
-[2025-12-16T09:18:03.059Z] Host lock lease acquired by instance ID '0000000000000000000000008BBD12A2'.
-[2025-12-16T09:18:29.652Z] Executing 'Functions.ProcessItemUpload' (Reason='New blob detected(LogsAndContainerScan): item-uploads/Glimmer-Cape.png', Id=569b1ccd-0767-4f46-a14a-e4838b7e48fa)
-[2025-12-16T09:18:29.653Z] Trigger Details: MessageId: 9e22a625-86fe-491c-a600-a68de3eb0cd4, DequeueCount: 1, InsertedOn: 2025-12-16T09:18:29.000+00:00, BlobCreated: 2025-12-16T09:18:24.000+00:00, BlobLastModified: 2025-12-16T09:18:24.000+00:00
-[2025-12-16T09:18:29.688Z] Received upload: <azure.functions.blob.InputStream object at 0x1073d94f0>
-[2025-12-16T09:18:29.688Z] Processing upload: item-uploads/Glimmer-Cape.png.png
-[2025-12-16T09:18:29.739Z] Item stub created: Glimmer Cape (ID: 16028cb8-f8e1-407b-a6ef-405d4a1ae02b)
-[2025-12-16T09:18:29.739Z] Status: pending_admin_review
-[2025-12-16T09:18:29.740Z] Image: item-uploads/Glimmer-Cape.png.png
-[2025-12-16T09:18:30.644Z] Executed 'Functions.ProcessItemUpload' (Succeeded, Id=569b1ccd-0767-4f46-a14a-e4838b7e48fa, Duration=1178ms)
-```
-
-You should now be able to observe the documents created in the Cosmos DB Data explorer
-![img](./img/cosmos-db-document.png)
 
 
 ### Test script 
@@ -471,51 +569,6 @@ even when Azure Functions "at-least-once" delivery guarantee causes retries.
 
 ## TODO: describe full flow with scripts running + screenshots from outputs 
 ## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
-
-
-# Project Iteration 3: Event-Driven Data Processing
-
-[Standard header - syllabus, learning goals, prerequisites, implementation steps]
-
-## Conceptual Overview
-[Event-driven architecture]
-[Pub/sub benefits]
-[Service Bus vs Event Grid - your excellent comparison]
-
-## Architecture
-[Mermaid diagram]
-[Final system overview]
-
----
-
-## 1. Create Blob Trigger Function (Image Processing)
-
-### What You're Building
-Process uploaded images, validate dimensions, create Cosmos DB stub documents.
-
-### Implementation
-```python
-[Decorator and key code]
-```
-
-**Key concepts:**
-- Blob trigger polling vs Event Grid
-- InputStream handling
-- Cosmos DB output binding
-
-### How to Test
-```bash
-./scripts/upload-test-item.sh items/test.png
-```
-
-### Expected Output
-[Log snippet showing validation and document creation]
-[Screenshot of Cosmos DB Data Explorer]
-
-### Use Cases
-- File upload processing
-- Image/video validation
-- Automated data ingestion
 
 ---
 
