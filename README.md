@@ -142,9 +142,10 @@ Within it, you can place connection strings / authentication strings to any Azur
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "CosmosDbConnectionString": YOUR_COSMOS_DB_CONNECTION_STRING,
     "AzureWebJobsStorage": YOUR_STORAGE_ACCOUNT_PRIMARY_CONNECTION_STRING,
-    "ServiceBusConnection": YOUR_SERVICE_BUS_CONNECTION_STRING, 
+    "ServiceBusConnection": YOUR_SERVICE_BUS_CONNECTION_STRING,
+    "EventGridTopicEndpoint": YOUR_EVENT_GRID_TOPIC_ENDPOINT,
+    "EventGridTopicKey": YOUR_EVENT_GRID_TOPIC_KEY,
   },
-  "ConnectionStrings": {}
 }
 ```
 

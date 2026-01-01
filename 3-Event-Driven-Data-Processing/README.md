@@ -1,11 +1,172 @@
 # Project Iteration 3: Event-Driven Data Processing 
 
+### Syllabus objectives covered: 
 
-### TODO 
-- Document Event Grid Topics better, should be a small section
-- Write about how to use the webhook with systemkey and that, Private Endpoints would be the better production solution
+- Implement function triggers by using data operations
+- Implement input and output bindings (advanced scenarios)
+- Chain functions using output bindings and triggers
+
+### Learning goals:
+
+Build sophisticated event-driven systems that respond to data changes across Azure services and process information automatically.
+
+### Project description:
+
+Create an automated data processing pipeline where functions respond to new data arriving in various Azure services.
+Build functions that trigger when blobs are uploaded, when database records change, and when messages arrive in queues.
+
+I have chosen to build a event-driven inventory management system where image uploads automatically trigger document creation, change detection publishes events,
+and multiple subscribers react in parallel—demonstrating real-world pub/sub messaging and fan-out patterns.
+
+### Implementation Steps:
+
+1. Create Blob trigger function for image upload processing
+2. Implement Cosmos DB trigger for Change Feed monitoring
+3. Configure Event Grid topic and CloudEvents publishing
+4. Add Event Grid trigger functions for event consumption
+5. Implement fan-out pattern with multiple subscribers
+6. Test end-to-end event flow with monitoring
+
+## Conceptual overview
+
+### Event-Driven Architecture: 
+
+**Traditional architecture:** uses synchronous, direct calls between services. Service A directly calls Service B, 
+which calls service C. This creates tight coupling where services must know about each other, failures will cascade, 
+and scaling requires coordination.
+
+**Event-driven architecture:** in some ways invents this. The services publish events when something happens, and 
+interested services react independently. Services does not know about each other, they only know about events. This creates
+loose coupling, independent scaling and failure isolation / delegation.
+
+### Key principles:
+- **Asynchronous communication** - Publishers don't wait for subscribers
+- **Loose coupling** - Services communicate via events, not direct calls
+- **Independent scaling** - Each service scales based on its own load
+- **Failure isolation** - One service's failure does not cascade or crash others
+- **Extensibility** - Add new subscribers without modifying publishers 
+
+**In this project**
+```
+ProcessItemUpload doesn't call OnItemDocumentChange directly
+                    ↓ 
+ProcessItemUpload creates document in Cosmos DB
+                    ↓
+Cosmos Change Feed publishes event
+                    ↓
+OnItemDocumentChange reacts to event
+                    ↓
+OnItemDocumentChange doesn't call UpdateStoreCatalog directly
+                    ↓
+OnItemDocumentChange publishes to Event Grid
+                    ↓
+UpdateStoreCatalog + RecordPriceHistory react independently
+```
+This way no function knows about each other, they only know about events.
+
+### Pub / Sub pattern
+Publisher-Subscriber (Pub/Sub) is the core pattern enabling event-driven architecture.
+
+**How it works:**
+1. **Publisher** creates event and sends it to a central topic/broker
+2. **Topic/broker** receives events and routes it to subscribers
+3. **Subscribers** receive and process events independently 
+
+**Example in this project:**
+When `ItemApproved` event is published:
+* **Decoupling:** OnItemDocumentChange doesn't know about catalog or price history
+* **Scalability:** UpdateStoreCatalog and RecordPriceHistory run in parallel
+* **Resilience:** If catalog update fails, price history still succeeds
+* **Flexibility:** Adding a third subscriber (for example search indexing) requires zero changes to existing code
 
 
+### Service Bus vs Event Grid:
+
+**Service Bus purpose**: Reliable messaging for commands and items to work on. 
+
+**Service Bus Used for**: Background jobs (process this order), Work queues ("resize these 100 images"), Pont-to-point communication, when **guarantied processing** is needed.
+
+**Architecture**:
+```mermaid
+graph LR
+    Producer --> Queue[Queue </br></br> Guaranteed delivery </br> Ordered processing </br> Retry logic ]
+    Queue --> Consumer
+```
+
+**Event Grid purpose:** Broadcast **events** and **notifications**
+
+**Event Grid Used for:** "Something happened" notification, system-wide events ( blob created, VM started), Multiple reactions to same event, when you need **broadcasting**.
+
+**Architecture:**
+```mermaid
+graph LR
+    Publisher --> EventGrid[Event Grid </br></br> Pub/Sub pattern </br> Multiple listeners </br> Fast, lightweight]
+    EventGrid --> Subscriber1
+    EventGrid --> Subscriber2
+    EventGrid --> Subscriber3
+```
+**Common pattern**
+- Event grid: "new order created" (broadcast notification)
+- Service bus: "process order 123" ( work the item with retry )
+
+---
+
+## Architecture 
+Project architecture when fully implemented:
+
+### High level flow
+```mermaid
+graph TD
+    Upload[Image Upload] --> Validate[Validate & Store]
+    Validate --> ChangeDetect[Detect Change]
+    ChangeDetect --> Publish[Publish Event]
+    Publish --> Fan[Fan-Out to Subscribers]
+    Fan --> Sub1[Admin Notification]
+    Fan --> Sub2[Update Catalog]
+    Fan --> Sub3[Record Price History]
+```
+**What you are building:** An event-driven inventory system with 5 Azure Functions across 4 phases:
+1. **Image Processing** - Blob trigger validates and creates Cosmos document
+2. **Change Detection** - Cosmos trigger publishes events based on document status
+3. **Event Routing** - Event Grid routes events by type
+4. **Parallel Processing** - Multiple subscribers react independently to events
+
+### Detailed System Architecture
+
+```mermaid
+graph TD
+    Upload[Uploads Image<br/>Messerschmidts-Reaver.png]
+    Upload -->|Stored in| BlobStorage[(Blob Storage:</br><br/>item-uploads/)]
+    BlobStorage -->|Triggers| BlobTrigger[Blob Trigger Function:</br><br/>ProcessItemUpload<br/><br/>1. Validate image<br/>2. Extract metadata<br/>3. Create stub in Cosmos]
+    BlobTrigger -->|Create item description| CosmosDB[(Cosmos DB<br/>items container<br/><br/>status: pending)]
+    CosmosDB -->|Change detected| CosmosTrigger[Cosmos DB Trigger:</br><br/>OnItemChanged<br/><br/>Checks status field:<br/>- pending --> ItemNeedsReview<br/>- approved --> ItemApproved]
+
+    CosmosTrigger -->|Publish event| EventGrid[Event Grid Topic<br/>item-inventory-events]
+    EventGrid -->|ItemNeedsReview|NotifyAdmin[Event Grid Trigger:<br/>SendAdminNotification]
+    NotifyAdmin -->|Email|AdminEmail[Admin notified:</br><br/>New item needs review!]
+
+    AdminEmail -->|Admin reviews|AdminAPI[Admin API Function:</br><br/>PATCH /admin/items/id<br/><br/>Updates:<br/>- price<br/>- stats<br/>- description<br/>- status: approved]
+    AdminAPI -->|Update|CosmosDB
+
+%% Add item to store catalog 
+    EventGrid -->|ItemApproved|StoreCatalog[Event Grid Trigger:<br/>UpdateStoreCatalog]
+    EventGrid -->|ItemApproved|PriceTable[Event Grid Trigger:<br/>PriceHistoryEntry]
+
+    StoreCatalog -->|Write to|StoreCatalogBlob[(Blob Storage:<br/>Item Catalog)]
+    PriceTable -->|Write to|PriceHistoryTable[(Table Storage:<br/>Price History)]
+```
+❗We are not sending email in this example, but you get the gist of it.❗
+
+**Components:**
+- **5 Azure Functions:** ProcessItemUpload, OnItemDocumentChange, SendAdminNotification, UpdateStoreCatalog, RecordPriceHistory
+- **3 Event Grid subscriptions:** ItemNeedsReview (1 subscriber), ItemApproved (2 subscribers)
+- **4 storage types:** Cosmos DB, Blob Storage, Table Storage, Event Grid
+
+---
+
+
+
+## 1. Create Blob Trigger Function (Image Processing)
 
 ### How Events Types ties everything together for Event Grid Publisher / Subscribers:
 
@@ -23,40 +184,6 @@ just ensure publishers and subscribers agree on the naming convention.
 In very simple terms. Some pice of code or resource creates an event, pushes it onto the event grid. We then 
 define Event Grid subscriptions which listens for the particular event. The subscriber then routes / calls another 
 azure function through a webhook endpoint, which runs another piece of code. 
-
-### Service Bus vs Event Grid 
-Complementary not replacements,  
-
-**Service Bus purpose**: Reliable messaging for commands and items to work on.
-
-**Service Bus Used for**: Background jobs (process this order), Work queues ("resize these 100 images"), Pont-to-point communication, when **guarantied processing** is needed.
-
-architecture: 
-```
-Producer → Queue → Consumer
-         ↑ Guaranteed delivery
-         ↑ Ordered processing
-         ↑ Retry logic
-```
-
-
-EG purpose: Broadcast **events** and **notifications**
-EG-used for: "Something happened" notification, system-wide events ( blob created, VM started), Multiple reactions to same event, when you need **broadcasting**.
-
-architecture: 
-```
-Publisher → Event Grid → Subscriber 1
-                      → Subscriber 2
-                      → Subscriber 3
-         ↑ Pub/Sub pattern
-         ↑ Multiple listeners
-         ↑ Fast, lightweight
-```
-
-How they could work together: 
-**Common pattern** 
-- Event grid: "new order created" (broadcast notification)
-- Service bus: "process order 123" ( work the item with retry ) // nodo what is the item here
 
 ### Semi-BIS Terraform file structure: 
 ## File Structure Summary
@@ -83,29 +210,6 @@ Used for holding documents created by function and followup by administrator
 
 Everything will be automatic, the "user" just uploads an image and everything else happens
 
-```mermaid
-graph TD
-    Upload[Uploads Image<br/>Messerschmidts-Reaver.png]
-    Upload -->|Stored in| BlobStorage[(Blob Storage:</br><br/>item-uploads/)]
-    BlobStorage -->|Triggers| BlobTrigger[Blob Trigger Function:</br><br/>ProcessItemUpload<br/><br/>1. Validate image<br/>2. Extract metadata<br/>3. Create stub in Cosmos]
-    BlobTrigger -->|Create item description| CosmosDB[(Cosmos DB<br/>items container<br/><br/>status: pending)]
-    CosmosDB -->|Change detected| CosmosTrigger[Cosmos DB Trigger:</br><br/>OnItemChanged<br/><br/>Checks status field:<br/>- pending --> ItemNeedsReview<br/>- approved --> ItemApproved]
-    
-    CosmosTrigger -->|Publish event| EventGrid[Event Grid Topic<br/>item-inventory-events]
-    EventGrid -->|ItemNeedsReview|NotifyAdmin[Event Grid Trigger:<br/>SendAdminNotification]
-    NotifyAdmin -->|Email|AdminEmail[Admin notified:</br><br/>New item needs review!]
-
-    AdminEmail -->|Admin reviews|AdminAPI[Admin API Function:</br><br/>PATCH /admin/items/id<br/><br/>Updates:<br/>- price<br/>- stats<br/>- description<br/>- status: approved]
-    AdminAPI -->|Update|CosmosDB
-
-    %% Add item to store catalog 
-    EventGrid -->|ItemApproved|StoreCatalog[Event Grid Trigger:<br/>UpdateStoreCatalog]
-    EventGrid -->|ItemApproved|PriceTable[Event Grid Trigger:<br/>PriceHistoryEntry]
-
-    StoreCatalog -->|Write to|StoreCatalogBlob[(Blob Storage:<br/>Item Catalog)]
-    PriceTable -->|Write to|PriceHistoryTable[(Table Storage:<br/>Price History)]
-```
-note: we are not sending email in this example, but you get the gist of it.
 ### Subscriptions: 
 - ItemNeedsReview &rarr; Notification to admin.
 - ItemApproved &rarr; Update Store Catalog with new item for sale.
@@ -367,3 +471,258 @@ even when Azure Functions "at-least-once" delivery guarantee causes retries.
 
 ## TODO: describe full flow with scripts running + screenshots from outputs 
 ## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
+
+
+# Project Iteration 3: Event-Driven Data Processing
+
+[Standard header - syllabus, learning goals, prerequisites, implementation steps]
+
+## Conceptual Overview
+[Event-driven architecture]
+[Pub/sub benefits]
+[Service Bus vs Event Grid - your excellent comparison]
+
+## Architecture
+[Mermaid diagram]
+[Final system overview]
+
+---
+
+## 1. Create Blob Trigger Function (Image Processing)
+
+### What You're Building
+Process uploaded images, validate dimensions, create Cosmos DB stub documents.
+
+### Implementation
+```python
+[Decorator and key code]
+```
+
+**Key concepts:**
+- Blob trigger polling vs Event Grid
+- InputStream handling
+- Cosmos DB output binding
+
+### How to Test
+```bash
+./scripts/upload-test-item.sh items/test.png
+```
+
+### Expected Output
+[Log snippet showing validation and document creation]
+[Screenshot of Cosmos DB Data Explorer]
+
+### Use Cases
+- File upload processing
+- Image/video validation
+- Automated data ingestion
+
+---
+
+## 2. Implement Cosmos DB Trigger (Change Feed Monitoring)
+
+### What You're Building
+React to document changes in real-time, publish events based on status.
+
+### Implementation
+```python
+[Cosmos trigger + Event Grid output binding]
+```
+
+**Key concepts:**
+- Change Feed vs traditional polling
+- Lease containers for checkpointing
+- Event publishing patterns
+
+### How to Test
+```bash
+python3 scripts/manage_items.py <item-id>  # Approve item
+```
+
+### Expected Output
+[Log showing change detection and event publishing]
+
+### Use Cases
+- Real-time data synchronization
+- Audit trail generation
+- Triggering downstream processes
+
+---
+
+## 3. Configure Event Grid Topic and Publishing
+
+### What You're Building
+Central event topic that routes events to multiple subscribers based on type.
+
+### Infrastructure (Terraform)
+```hcl
+[Event Grid topic configuration]
+```
+
+### Event Schema (CloudEvents)
+```python
+[Event structure with all required fields]
+```
+
+**CloudEvents Specification:**
+| Field | Required | Purpose | Example |
+|-------|----------|---------|---------|
+| specversion | ✅ | Schema version | "1.0" |
+| type | ✅ | Event type (routing key) | "Inventory.ItemApproved" |
+| source | ✅ | Event producer | "inventory-system/cosmos-db" |
+| id | ✅ | Unique event ID | uuid |
+| subject | ❌ | Event subject | "items/abc-123" |
+| time | ❌ | Event timestamp | ISO 8601 |
+| data | ❌ | Event payload | {...} |
+
+### How to Test
+[Check Event Grid metrics in portal]
+
+---
+
+## 4. Add Event Grid Subscriber Functions
+
+### What You're Building
+Multiple functions that react independently to same events (fan-out pattern).
+
+### 4a. Admin Notification Subscriber
+
+**Implementation:**
+```python
+[SendAdminNotification function]
+```
+
+**Subscription configuration:**
+```hcl
+[Event Grid subscription filtering on ItemNeedsReview]
+```
+
+### 4b. Store Catalog Subscriber
+
+**Implementation:**
+```python
+[UpdateStoreCatalog function with read-modify-write]
+```
+
+**Key concept: Idempotency**
+```python
+[Check if exists, update vs insert logic]
+```
+
+### 4c. Price History Subscriber
+
+**Implementation:**
+```python
+[RecordPriceHistory with Table Storage]
+```
+
+**Table Storage keys:**
+- PartitionKey: Item ID (groups history per item)
+- RowKey: Timestamp (sortable, unique)
+
+### How to Test Complete Flow
+```bash
+./scripts/test-complete-flow.sh
+```
+
+### Expected Output
+[Logs showing all 3 functions executing in parallel]
+[Screenshot of catalog blob, table entries]
+
+---
+
+## 5. Implement Fan-Out Pattern
+
+### What You're Building
+One event triggers multiple independent processors in parallel.
+
+### Architecture
+[Diagram showing event → 3 subscribers]
+
+**Benefits:**
+- Parallel processing
+- Independent scaling
+- Failure isolation
+
+### Real-World Example
+When `ItemApproved` publishes:
+- UpdateStoreCatalog: ~100ms
+- RecordPriceHistory: ~50ms
+- SendNotification: ~200ms
+
+**Sequential would take:** 350ms  
+**Parallel takes:** 200ms (longest)
+
+---
+
+## 6. Configure Error Handling and Retry Policies
+
+### Event Grid Retry Configuration
+
+**Terraform:**
+```hcl
+[Retry policy configuration]
+```
+
+**Behavior:**
+- Exponential backoff: 30s → 1m → 10m → 30m
+- Max attempts: 30
+- TTL: 24 hours
+- Dead letter after exhaustion
+
+### Testing Failure Scenarios
+
+**Test 1: Transient failure**
+[Simulate network issue, watch retry]
+
+**Test 2: Permanent failure**
+[Invalid event, check dead letter queue]
+
+### Idempotency Patterns
+[Code showing deduplication logic]
+
+---
+
+## 7. Test End-to-End Event Flow
+
+### Complete Test Script
+```bash
+[Step-by-step testing commands]
+```
+
+### Monitoring
+[Application Insights queries]
+[Expected log sequence]
+
+---
+
+## Advanced Topics
+
+### Webhook Authentication
+[System keys vs Private Endpoints]
+
+### Change Feed Checkpointing
+[Leases container deep dive]
+
+### CloudEvents vs Event Grid Schema
+[Comparison table]
+
+---
+
+## Comparison Tables
+
+### Trigger Comparison
+[Table from your current content]
+
+### Event Grid vs Service Bus
+[When to use what - decision matrix]
+
+---
+
+## Key Learning Questions
+[Your current excellent questions]
+
+---
+
+## Additional Resources
+[Links to docs]gg
