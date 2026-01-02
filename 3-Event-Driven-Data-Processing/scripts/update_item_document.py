@@ -3,6 +3,14 @@ from datetime import datetime
 from azure.cosmos import CosmosClient
 import os
 
+"""
+CLI utility for managing Document items in Azure Cosmos DB.
+
+Uses the Azure Cosmos DB Python SDK.
+When run without arguments, lists item IDs, names, and status.
+When provided an item ID, updates and approves the item with predefined metadata and stats.
+"""
+
 database_client = CosmosClient(
     url=os.getenv("COSMOS_ENDPOINT"),
     credential=os.getenv("COSMOS_KEY")

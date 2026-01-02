@@ -139,7 +139,7 @@ graph TD
     Upload -->|Stored in| BlobStorage[(Blob Storage:</br><br/>item-uploads/)]
     BlobStorage -->|Triggers| BlobTrigger[Blob Trigger Function:</br><br/>ProcessItemUpload<br/><br/>1. Validate image<br/>2. Extract metadata<br/>3. Create stub in Cosmos]
     BlobTrigger -->|Create item description| CosmosDB[(Cosmos DB<br/>items container<br/><br/>status: pending)]
-    CosmosDB -->|Change detected| CosmosTrigger[Cosmos DB Trigger:</br><br/>OnItemChanged<br/><br/>Checks status field:<br/>- pending --> ItemNeedsReview<br/>- approved --> ItemApproved]
+    CosmosDB -->|Change detected| CosmosTrigger[Cosmos DB Trigger:</br><br/>OnItemDocumentChanged<br/><br/>Checks status field:<br/>- pending --> ItemNeedsReview<br/>- approved --> ItemApproved]
 
     CosmosTrigger -->|Publish event| EventGrid[Event Grid Topic<br/>item-inventory-events]
     EventGrid -->|ItemNeedsReview|NotifyAdmin[Event Grid Trigger:<br/>SendAdminNotification]
@@ -169,7 +169,7 @@ graph TD
 ### Building overview
 Process uploaded images, validate dimensions, create Cosmos DB stub documents.
 
-### Infrastructure (Terraform)
+### Infrastructure 
 Required infrastructure can be found in `storage.tf` and `cosmosdb.tf`. Specifically we just need a blob container
 and an item and leases container.
 
@@ -292,7 +292,7 @@ This pattern (Blob trigger &rarr; Validation &rarr; Database) is useful for:
 ### Building overview 
 Function that reacts to document changes in real-time and publish events based on item document status.
 
-### Infrastructure (Terraform)
+### Infrastructure
 This is where things start getting interesting! We will provision an Event Grid, which will be the backbone of our 
 pub/sub and event driven architecture. Later we will create subscribers for our events, but for now we just need the Event Grid resource.
 See `./terraform/eventgrid.tf` for full implementation.
@@ -303,6 +303,14 @@ resource "azurerm_eventgrid_topic" "item_inventory_events" {
   resource_group_name = azurerm_resource_group.functions-group.name
   input_schema        = "CloudEventSchemaV1_0" # This is the modern standard for Events.
 }
+```
+
+The EventGrid resource provides us with a Endpoint url (on which to push events) and an Access Key for authentication.  
+Both of these are configured in the `app_settings` of our Azure Linux Function App resource:
+```hcl
+# Event Grid Configuration
+"EventGridTopicEndpoint" = azurerm_eventgrid_topic.item_inventory_events.endpoint
+"EventGridTopicKey"      = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
 ```
 
 ### Implementation
@@ -417,6 +425,250 @@ the `Inventory.ItemNeedsReview` event, but it can be clearly observed within the
 
 ---
 
+## 3. Event Grid Subscribers and Fan-Out Pattern
+
+### Building Overview
+Create multiple Event Grid trigger functions that react independently to the same event.
+This will demonstrate the fan-out pattern where one published event triggers parallel processing across multiple subscribers.
+We will implement two subscriber resources and their corresponding subscriber functions for: 
+- "Sending" a notification to a fictive Admin user for items that needs review.
+- Creating / updating the Item Store Catalog.
+- Tracking price histories for items as they are added to the Store Catalog.
+
+### Infrastructure 
+Since we have our Event Grid resource and Function Application provisioned, we first need to create Event Grid subscriptions 
+that route events to azure function endpoints through webhooks. See `eventgrid-subscriptions.tf` for full implementation.
+
+❗**Important note:** For subscriptions to be successfully created, the receving functions **MUST** be running in Azure.
+This is solved by doing a two-step provisioning of Azure resources, where Azure Functions are packaged and deployed before 
+Event Grid subscriptions are created.❗
+
+```hcl
+
+# Subscription 1: ItemNeedsReview -> Admin Notification Function
+resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
+  name                 = "item-needs-review-notification"
+  scope                = azurerm_eventgrid_topic.item_inventory_events.id
+  included_event_types = ["Inventory.ItemNeedsReview"]
+
+  event_delivery_schema = "CloudEventSchemaV1_0" # Adhere to EventGrid event type
+  # Route to Azure Function through webhook.
+  # This is a direct URL -> to the running function within the Function Application.
+  # Must also provide the System Key for authenticated connection!
+  webhook_endpoint {
+    url = "https://${azurerm_linux_function_app.functions-app.name}.azurewebsites.net/runtime/webhooks/EventGrid?functionName=SendAdminNotification&code=${data.azurerm_function_app_host_keys.functions_keys.event_grid_extension_config_key}"
+  }
+}
+
+
+# Subscription 2: ItemApproved -> Store Catalog
+resource "azurerm_eventgrid_event_subscription" "item_approved_store_catalog" {
+  name                 = "item-approved-catalog-update"
+  scope                = azurerm_eventgrid_topic.item_inventory_events.id
+  included_event_types = ["Inventory.ItemApproved"]
+  ...
+}
+
+# Subscription 3: ItemApproved -> Price History
+resource "azurerm_eventgrid_event_subscription" "item_approved_price_history" {
+  name                 = "item-approved-price-history"
+  scope                = azurerm_eventgrid_topic.item_inventory_events.id
+  included_event_types = ["Inventory.ItemApproved"]
+  ...
+}
+```
+Notice how each subscription resource can filter events on `included_event_types` property!
+
+Secondly we must provision some new storage resources for our item Store Catalog, and for tracking price history.
+We can chose Blob Container for our Store catalog as it is non-relational data in JSON format. For the price history, it is better
+to use a SQL Table Storage, which is what we will do in this demonstration.
+```hcl
+# Blob Container - Approved item catalog, stored as JSON
+resource "azurerm_storage_container" "store_catalog" {
+  name               = "store-catalog"
+  storage_account_id = azurerm_storage_account.functions-storage.id
+}
+
+# Table Storage - Table for tracking price history
+resource "azurerm_storage_table" "price_history" {
+  name                 = "ItemPriceHistory"
+  storage_account_name = azurerm_storage_account.functions-storage.name
+}
+```
+
+### Implementation
+Implementation, is as in the previous steps trivial when using the Azure Function decorators. 
+
+**Subscriber 1: SendAdminNotification**
+
+This function is minimalistic, in a real world scenario this function could possibly be responsible for 
+sending out emails with item documents that needs reviews to admins, or notify them about new tasks. For the sake of 
+maintaining focus and scope, it just logs which information that admin needs to fill out.
+```python
+# Event Grid subscriber function
+@app.function_name(name="SendAdminNotification")
+@app.event_grid_trigger(arg_name="event")
+def send_admin_notification(event: func.EventGridEvent):
+    ...
+    # Extract event data as specified in event producer function "OnItemDocumentChange"
+    event_json = event.get_json()
+    event_data = event_json.get('data', {})
+    ...
+```
+Notice how data has the same structure as the published event from our previous implementation step.
+
+**Subscriber 2: UpdateStoreCatalog**
+
+This function is responsible for creating and updating the catalogue of approved items. It's subscribed to `Inventory.ItemApproved` events,
+and will simply unpack the event data, and append it to a JSON file in our new Blob Container: `store-catalog`.
+```python
+# ApprovedItem Event Subscription function - Item Catalog
+@app.function_name(name="UpdateStoreCatalog")
+@app.event_grid_trigger(arg_name="approved_event")
+@app.blob_input(
+    arg_name="existing_catalog",
+    path="store-catalog/item-catalog.json",
+    connection="AzureWebJobsStorage"
+)
+@app.blob_output(
+    arg_name="updated_catalog",
+    path="store-catalog/item-catalog.json",  # All items written to single catalog file
+    connection="AzureWebJobsStorage"
+)
+def update_store_catalog(
+    approved_event: func.EventGridEvent,
+    existing_catalog: func.InputStream,
+    updated_catalog: func.Out[str]
+):
+    # Create catalog entry
+    catalog_item = {...}
+    
+    # Read existing catalog (or create new if doesn't exist)
+    if catalog_data:
+        catalog_list = json.loads(catalog_data)
+    else:
+        catalog_list = []
+        logging.info("Creating new catalog (no existing file)")
+
+    # Write updated item catalog to Blob Container
+    catalog_list.append(catalog_item)
+    updated_catalog.set(json.dumps(catalog_list, indent=2))
+```
+
+**Subscriber 3: RecordPriceHistory**
+This function is responsible for writing to our new Table Storage. It will create new price entries for items once the
+`Inventory.itemApproved` event is fired.
+```python
+@app.function_name(name="RecordPriceHistory")
+@app.event_grid_trigger(arg_name="approved_event")
+@app.table_output(
+    arg_name="price_history",
+    table_name="ItemPriceHistory",  # References Table Storage
+    connection="AzureWebJobsStorage"
+)
+def record_price_history(
+    approved_event: func.EventGridEvent,
+    price_history: func.Out[str],
+):
+    price_entry = {
+        "PartitionKey": item_id,
+        "RowKey": str(uuid.uuid4()),
+        "ItemId": item_id,
+        ...
+    }
+
+    # Write to Table Storage
+    price_history.set(json.dumps(price_entry, indent=2))
+
+```
+### Key Concepts
+
+**Fan-Out Pattern:**
+One published event triggers multiple independent subscribers to execute in parallel.
+
+**How it works in this project:**
+```
+OnItemDocumentChange publishes "Inventory.ItemApproved"
+                ↓
+        Event Grid Topic
+                ↓
+    ┌───────────┴───────────┐
+    ↓                       ↓
+UpdateStoreCatalog    RecordPriceHistory
+(runs in parallel)    (runs in parallel)
+```
+**Benefits:**
+- **Parallel processing:** Both subscribers execute simultaneously
+- **Independent scaling:** Each subscriber scales based on its own workload
+- **Failure isolation:** If catalog update fails, price history still succeeds
+- **Extensibility:** Adding a third subscriber (e.g., search indexing) requires zero changes to publisher
+
+
+**Event Grid Subscriptions:**
+Subscriptions act as routing rules: "When event X happens, send to endpoint Y"
+
+**Key configuration:**
+- **Filter by type:** `included_event_types = ["Inventory.ItemApproved"]` => only matching events route to this subscriber
+- **Webhook endpoint:** Direct URL to Azure Function with system key for authentication
+- **Event schema:** CloudEventSchemaV1_0 ensures standard event format
+
+**Why subscriptions decouple publisher from subscribers:**
+- Publisher doesn't know who subscribes (or if anyone does)
+- Adding/removing subscribers doesn't affect publisher code
+- Each subscriber receives events independently
+
+
+### How to Test
+1. Same procedure as previous steps, run the `up.sh` script for provisioning of infrastructure and deploy functions.
+You should see all three Event Subscriptions within the **Event Grid Topic** resource: 
+![img](./img/event-grid-subscriptions.png)
+2. Make sure Cosmos DB is populated with some Item Documents, this can be achieved, as previously with `test_upload.sh`.
+3. The next step is to make our function `OnItemDocumentChange` function fire a `Inventory.itemApproved` event. We can do that by updating a item Document 
+in the Cosmos DB, and set status to `approved`. I have provided a script `update_item_document.sh`. Run it once to query for all Document ID's, run it again with 
+an ID in order to populate the missing fields in the Document, and set status to `approved`.
+```
+./update_item_documents.sh
+
+4fa4875f-2ab8-4bc1-800d-1b74163b0747	Black King Bar	pending_admin_review
+f9d2670d-d69c-4379-a46b-13ffede51ee5	Blink Dagger	pending_admin_review
+60a11b47-7157-4d16-b55b-321c07ec0124	Glimmer Cape	pending_admin_review
+53be9a50-3093-4119-b9f8-ed0f5a84308f	Scythe Of Vyse	pending_admin_review
+2d7d7b0a-7d8e-4987-b89e-35d301930b0e	Witch Blade	    pending_admin_review
+```
+Now it can be run again with argument, for example: 
+```bash
+    ./update_item_documents.sh 2d7d7b0a-7d8e-4987-b89e-35d301930b0e
+```
+4. Visit the Azure Portal to see event metrics for each Event Subscription. We can also observe that new entries are 
+created in our new Storage resources.  
+**Item Catalog:**
+![img](./img/item-catalog.png)
+**Price History:**
+![img](./img/price-history.png)
+
+
+### Use Cases
+**When to use fan-out with Event Grid:**
+- **System notifications:** One event needs to trigger multiple independent actions (logging, metrics, notifications)
+- **Workflow orchestration:** Trigger parallel approval processes or validation steps
+- **Microservices coordination:** Decouple services while maintaining reactivity to shared events
+
+**When NOT to use Event Grid:**
+- Need guaranteed ordering (use Service Bus sessions instead)
+- Need request-response pattern (use HTTP trigger instead)
+- Need message-level transactions (use Service Bus instead)
+
+❗**Important note:** Event Grid uses "at-least-once" delivery, meaning subscribers may receive the same event multiple times (due to retries). 
+Functions must be idempotent and safe to execute multiple times with same input. ❗
+
+
+---
+
+1. Function creates event of type Inventory.ItemNeedsReview
+2. Azure Functions runtime sends HTTP POST to Event Grid Topic endpoint
+3. Event Grid Topic receives and stores the event
+4. Event Grid begins routing process
+
 
 ### Semi-BIS Terraform file structure: 
 ## File Structure Summary
@@ -448,58 +700,6 @@ Everything will be automatic, the "user" just uploads an image and everything el
 - ItemApproved &rarr; Update Store Catalog with new item for sale.
 - ItemApproved &rarr; Store Price History for item in table storage. 
 
-
-## Event Grid Subscriptions:
-An Event Grid implements the Pub/Sub architecture.
-### Component breakdown: 
-**1. Event Grid Topic (Message Bus):**  
-A centralized endpoint that receives and routes events.  
-Terraform configuration example: 
-```hcl
-# terraform/eventgrid.tf
-resource "azurerm_eventgrid_topic" "inventory_events" {
-  name                = "event-name"
-  resource_group_name = azurerm_resource_group.functions-group.name
-  location            = "northeurope"
-  
-  input_schema = "CloudEventSchemaV1_0"  # Accepts CloudEvents format
-}
-```
-The EventGrid resource provides us with a Endpoint url (on which to push events) and an Access Key for authentication.  
-Both of these are configured in the `app_settings` of our Azure Linux Function App resource:  
-```hcl
-# Event Grid Configuration
-"EventGridTopicEndpoint" = azurerm_eventgrid_topic.item_inventory_events.endpoint
-"EventGridTopicKey"      = azurerm_eventgrid_topic.item_inventory_events.primary_access_key
-```
-
-**2. Publisher (Event producer):**  
-Azure Function that sends events TO the Event Grid Topic.  
-Publisher Function example:
-```python
-import azure.functions as func
-import json
-app = func.FunctionApp()
-
-@app.function_name(name="OnItemChanged")
-@app.cosmos_db_trigger(...)
-@app.event_grid_output(
-    arg_name="event_grid_event",
-    topic_endpoint_uri="EventGridTopicEndpoint",  #  Points to Topic URI
-    topic_key_setting="EventGridTopicKey"         #  Access key for auth
-)
-def on_item_changed(documents, event_grid_event):
-    # Create CloudEvent
-    event = {
-        "specversion": "1.0",
-        "type": "Inventory.ItemNeedsReview",      # Event type (important for routing!)
-        "source": "inventory-system/cosmos-db",
-        "data": { ... }
-    }
-    
-    # Publish to Event Grid Topic
-    event_grid_event.set(json.dumps([event]))
-```
 **What happens:**
 
 1. Function creates event of type Inventory.ItemNeedsReview
@@ -550,55 +750,6 @@ def send_admin_notification(event: func.EventGridEvent):
 In this project, we filter on two different events, but for three subscribers:
 - ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
 - ItemApproved event &rarr; Goes to UpdateItemCatalog + ItemPriceHistory
-
-## implementation plan: 
-
-1) Blob trigger - Image processing
-   1) Blob trigger (automatic file processing )
-   2) Multiple output bindings  (blob + cosmos DB)
-   3) Real image processing (resize)
-   4) Metadata extraction
-2) Cosmos DB change feed trigger - react to new patterns (on item created)
-   1) Cosmos DB change feed (react to database change)
-   2) Event grid output binding (publish event)
-   3) Event-driven architecture
-3) Event Grid Trigger - Send admin notification
-   1) Event Grid trigger (react to system events)  
-   2) Multiple subscribers to same event 
-   3) Loose coupling 
-4) Update item catalog, and price history on the same `ItemApproved` event.
-
-
-Other stuff to do: 
-- Error handling and Retry policies : Blob trigger  (poison blob after max number of retries `host.json`)
-- Cosmos DB trigger (retries from last checkpoint) 
-- Event grid: dead letter destination for failures, built-in retry with exponential backoff. ( configure in event grid subscription )  
-
-
-### Interesting test scenarios:
-1. Upload invalid file (not an image) &rarr;Trigger should fail, retry, then poison queue
-2. Cosmos DB unavailable (simulate by wrong connection string) &rarr; Blob trigger retries, eventually fails
-3. Event Grid endpoint down &rarr; Event Grid retries with backoff, then dead letters
-4.Duplicate processing (idempotency test) &rarr;  Upload same file twice  + Ensure no duplicate items in Cosmos DB
-
-
-### Extra infrastructure needed 
-- event grid topic 
-- event subscription 
-- storage containers ( item uploads, item thumbnail, items, leases - for change feed)
-
-
-### Common fail scenarios and outcome: 
-``` 
-Message has reached MaxDequeueCount of 5. Moving message to queue 'webjobs-blobtrigger-poison'.
-```
-
-### Running the function locally: 
-1. Create the terraform outputs that we need for our bindings: 
-   - Connection string to the Blob storage for image uploads 
-   - Connection string to the storage account where the function will write documents
-2. Capture them in a script, they are sensitive so we can not see them directly from the Terraform output.
-3. Add them to your `local.settings.json` configuration so that your locally running function can interact with both databases.
 
 
 ### Test script 
@@ -674,150 +825,3 @@ even when Azure Functions "at-least-once" delivery guarantee causes retries.
 ## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
 
 ---
-
-## 4. Add Event Grid Subscriber Functions
-
-### What You're Building
-Multiple functions that react independently to same events (fan-out pattern).
-
-### 4a. Admin Notification Subscriber
-
-**Implementation:**
-```python
-[SendAdminNotification function]
-```
-
-**Subscription configuration:**
-```hcl
-[Event Grid subscription filtering on ItemNeedsReview]
-```
-
-### 4b. Store Catalog Subscriber
-
-**Implementation:**
-```python
-[UpdateStoreCatalog function with read-modify-write]
-```
-
-**Key concept: Idempotency**
-```python
-[Check if exists, update vs insert logic]
-```
-
-### 4c. Price History Subscriber
-
-**Implementation:**
-```python
-[RecordPriceHistory with Table Storage]
-```
-
-**Table Storage keys:**
-- PartitionKey: Item ID (groups history per item)
-- RowKey: Timestamp (sortable, unique)
-
-### How to Test Complete Flow
-```bash
-./scripts/test-complete-flow.sh
-```
-
-### Expected Output
-[Logs showing all 3 functions executing in parallel]
-[Screenshot of catalog blob, table entries]
-
----
-
-## 5. Implement Fan-Out Pattern
-
-### What You're Building
-One event triggers multiple independent processors in parallel.
-
-### Architecture
-[Diagram showing event → 3 subscribers]
-
-**Benefits:**
-- Parallel processing
-- Independent scaling
-- Failure isolation
-
-### Real-World Example
-When `ItemApproved` publishes:
-- UpdateStoreCatalog: ~100ms
-- RecordPriceHistory: ~50ms
-- SendNotification: ~200ms
-
-**Sequential would take:** 350ms  
-**Parallel takes:** 200ms (longest)
-
----
-
-## 6. Configure Error Handling and Retry Policies
-
-### Event Grid Retry Configuration
-
-**Terraform:**
-```hcl
-[Retry policy configuration]
-```
-
-**Behavior:**
-- Exponential backoff: 30s → 1m → 10m → 30m
-- Max attempts: 30
-- TTL: 24 hours
-- Dead letter after exhaustion
-
-### Testing Failure Scenarios
-
-**Test 1: Transient failure**
-[Simulate network issue, watch retry]
-
-**Test 2: Permanent failure**
-[Invalid event, check dead letter queue]
-
-### Idempotency Patterns
-[Code showing deduplication logic]
-
----
-
-## 7. Test End-to-End Event Flow
-
-### Complete Test Script
-```bash
-[Step-by-step testing commands]
-```
-
-### Monitoring
-[Application Insights queries]
-[Expected log sequence]
-
----
-
-## Advanced Topics
-
-### Webhook Authentication
-[System keys vs Private Endpoints]
-
-### Change Feed Checkpointing
-[Leases container deep dive]
-
-### CloudEvents vs Event Grid Schema
-[Comparison table]
-
----
-
-## Comparison Tables
-
-### Trigger Comparison
-[Table from your current content]
-
-### Event Grid vs Service Bus
-[When to use what - decision matrix]
-
----
-
-## Key Learning Questions
-[Your current excellent questions]
-
----
-
-## Additional Resources
-[Links to docs]gg

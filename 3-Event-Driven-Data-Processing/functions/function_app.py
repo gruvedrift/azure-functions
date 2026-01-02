@@ -341,8 +341,8 @@ def update_store_catalog(
     connection="AzureWebJobsStorage"
 )
 def record_price_history(
-        approved_event: func.EventGridEvent,
-        price_history: func.Out[str],
+    approved_event: func.EventGridEvent,
+    price_history: func.Out[str],
 ):
     """
     Records price history for analytics and trend detection.
