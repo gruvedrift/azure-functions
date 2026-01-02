@@ -15,7 +15,7 @@ Build sophisticated event-driven systems that respond to data changes across Azu
 Create an automated data processing pipeline where functions respond to new data arriving in various Azure services.
 Build functions that trigger when blobs are uploaded, when database records change, and when messages arrive in queues.
 
-I have chosen to build a event-driven inventory management system where image uploads automatically trigger document creation, change detection publishes events,
+I have chosen to build an event-driven inventory management system where image uploads automatically trigger document creation, change detection publishes events,
 and multiple subscribers react in parallel—demonstrating real-world pub/sub messaging and fan-out patterns.
 
 ### Implementation Steps:
@@ -25,7 +25,6 @@ and multiple subscribers react in parallel—demonstrating real-world pub/sub me
 3. Configure Event Grid topic and CloudEvents publishing
 4. Add Event Grid trigger functions for event consumption
 5. Implement fan-out pattern with multiple subscribers
-6. Test end-to-end event flow with monitoring
 
 ## Conceptual overview
 
@@ -208,7 +207,7 @@ def process_item_upload(
     item_document: func.Out[str],
 ):
 ```
-One a image is uploaded, the input binding trigger will start our python function. In turn, it will create a new "item document"
+Once an image is uploaded, the input binding trigger will start our Python function. In turn, it will create a new "item document"
 with various data and metadata in a JSON format (see implementation in `function_app.py` for details).
 The documents are then uploaded to our provisioned Cosmos DB.
 
@@ -242,7 +241,7 @@ The documents are then uploaded to our provisioned Cosmos DB.
 - **Polling interval:** Checks for new blobs every ~10 seconds (not instant)
 - **Binding expression:** `{itemName}` extracts filename from path automatically
 - **InputStream type:** Provides file content as stream, memory-efficient for large files
-- 
+
 **Document Structure (Stub Pattern):**
 - **Populated fields:** id, name, imageUrl, metadata (from image)
 - **Null fields:** cost, stats, description (filled by admin later)
@@ -305,7 +304,7 @@ resource "azurerm_eventgrid_topic" "item_inventory_events" {
 }
 ```
 
-The EventGrid resource provides us with a Endpoint url (on which to push events) and an Access Key for authentication.  
+The EventGrid resource provides us with an Endpoint url (on which to push events) and an Access Key for authentication.  
 Both of these are configured in the `app_settings` of our Azure Linux Function App resource:
 ```hcl
 # Event Grid Configuration
@@ -396,7 +395,7 @@ included_event_types = ["Inventory.ItemNeedsReview"]  # <- Must match exactly!
 Event Grid uses this string to decide which subscribers receive the event. Custom event types can be any string you choose,
 just ensure publishers and subscribers agree on the naming convention.
 
-In very simple terms: some pice of code or resource creates an event, pushes it onto the event grid. We then
+In very simple terms: some piece of code or resource creates an event, pushes it onto the event grid. We then
 define Event Grid subscriptions which listens for the particular event. The subscriber then routes / calls another
 azure function through a webhook endpoint, which runs another piece of code.
 
@@ -425,7 +424,7 @@ the `Inventory.ItemNeedsReview` event, but it can be clearly observed within the
 
 ---
 
-## 3. Event Grid Subscribers and Fan-Out Pattern
+## 4 + 5: Event Grid Subscribers and Fan-Out Pattern with multilpe subscribers
 
 ### Building Overview
 Create multiple Event Grid trigger functions that react independently to the same event.
@@ -439,7 +438,7 @@ We will implement two subscriber resources and their corresponding subscriber fu
 Since we have our Event Grid resource and Function Application provisioned, we first need to create Event Grid subscriptions 
 that route events to azure function endpoints through webhooks. See `eventgrid-subscriptions.tf` for full implementation.
 
-❗**Important note:** For subscriptions to be successfully created, the receving functions **MUST** be running in Azure.
+❗**Important note:** For subscriptions to be successfully created, the receiving functions **MUST** be running in Azure.
 This is solved by doing a two-step provisioning of Azure resources, where Azure Functions are packaged and deployed before 
 Event Grid subscriptions are created.❗
 
@@ -623,7 +622,7 @@ Subscriptions act as routing rules: "When event X happens, send to endpoint Y"
 You should see all three Event Subscriptions within the **Event Grid Topic** resource: 
 ![img](./img/event-grid-subscriptions.png)
 2. Make sure Cosmos DB is populated with some Item Documents, this can be achieved, as previously with `test_upload.sh`.
-3. The next step is to make our function `OnItemDocumentChange` function fire a `Inventory.itemApproved` event. We can do that by updating a item Document 
+3. The next step is to make our function `OnItemDocumentChange` function fire a `Inventory.itemApproved` event. We can do that by updating an item Document 
 in the Cosmos DB, and set status to `approved`. I have provided a script `update_item_document.sh`. Run it once to query for all Document ID's, run it again with 
 an ID in order to populate the missing fields in the Document, and set status to `approved`.
 ```
@@ -661,129 +660,103 @@ created in our new Storage resources.
 ❗**Important note:** Event Grid uses "at-least-once" delivery, meaning subscribers may receive the same event multiple times (due to retries). 
 Functions must be idempotent and safe to execute multiple times with same input. ❗
 
-
 ---
 
-1. Function creates event of type Inventory.ItemNeedsReview
-2. Azure Functions runtime sends HTTP POST to Event Grid Topic endpoint
-3. Event Grid Topic receives and stores the event
-4. Event Grid begins routing process
+## Trigger Selection Reference
+
+### When to Use Each Trigger Type
+
+| Scenario                      | Use This Trigger           | Why                                              |
+|-------------------------------|----------------------------|--------------------------------------------------|
+| Process files as uploaded     | **Event Grid** (for blobs) | Real-time (<1s), guaranteed delivery, no polling |
+| Process files (simple)        | **Blob trigger**           | Easy setup, acceptable 10-30s delay              |
+| React to database changes     | **Cosmos DB trigger**      | Change Feed provides ordered, reliable stream    |
+| React to system events        | **Event Grid trigger**     | Fast, lightweight, built-in Azure service events |
+| Guaranteed message processing | **Service Bus trigger**    | Dead letter queue, sessions, transactions        |
+| Scheduled tasks               | **Timer trigger**          | CRON expressions, singleton execution            |
+| User-initiated actions        | **HTTP trigger**           | Synchronous request-response                     |
+
+### Blob Trigger vs Event Grid (for Blob Events)
+
+| Aspect               | Blob Trigger                       | Event Grid Trigger                 |
+|----------------------|------------------------------------|------------------------------------|
+| **Latency**          | 10-30 seconds                      | <1 second                          |
+| **Mechanism**        | Polling (scans container)          | Push (blob service emits event)    |
+| **Reliability**      | Can miss rapid uploads             | Guaranteed delivery                |
+| **Scale**            | Limited by polling frequency       | Handles high-frequency events      |
+| **Cost**             | Included in function execution     | Per-event cost (minimal)           |
+| **Setup complexity** | Simple (just trigger)              | Requires Event Grid subscription   |
+| **Use when**         | Simple scenarios, acceptable delay | Production, high-volume, real-time |
 
 
-### Semi-BIS Terraform file structure: 
-## File Structure Summary
-```
-terraform/
-├── main.tf                       # Provider, resource group, random suffix
-├── variables.tf                  # All input variables
-├── storage.tf                    # Storage account, containers, tables
-├── cosmosdb.tf                   # Cosmos DB, databases, containers
-├── eventgrid.tf                  # Event Grid topic
-├── eventgrid-subscriptions.tf    # Event Grid subscriptions (separate for clarity)
-├── functions.tf                  # App Insights, Service Plan, Function App
-└── outputs.tf                    # All outputs 
-```
+## Error Handling Reference
 
-### storage.tf 
-Holds storage infrastructure for
-- Item image uploads .png (Blob Container)
-- Store catalog .json (Blob Container)
-- Price history (Table Storage)
+### Event Grid Retry Behavior
 
-### cosmosdb.tf
-Used for holding documents created by function and followup by administrator
+**Default configuration:**
+- **Max delivery attempts:** 30
+- **Event TTL:**  1,440 minutes (24 hours)
+- **Retry schedule:** Exponential backoff
+- **Exponential backoff schedule:** (10s, 30s, 1m, 5m, 10m, 30m, 1h, 3h, 6h, 12h… up to TTL)
 
-Everything will be automatic, the "user" just uploads an image and everything else happens
-
-### Subscriptions: 
-- ItemNeedsReview &rarr; Notification to admin.
-- ItemApproved &rarr; Update Store Catalog with new item for sale.
-- ItemApproved &rarr; Store Price History for item in table storage. 
-
-**What happens:**
-
-1. Function creates event of type Inventory.ItemNeedsReview
-2. Azure Functions runtime sends HTTP POST to Event Grid Topic endpoint
-3. Event Grid Topic receives and stores the event
-4. Event Grid begins routing process
-
-**3. Event Grid Subscription (Routing Rule):**
-A configuration that tells Event Grid that, "when event X happens, route to endpoint Y".  
-Terraform configuration example:
+**Terraform configuration:**
 ```hcl
-# terraform/eventgrid-subscriptions.tf
-resource "azurerm_eventgrid_event_subscription" "item_needs_review" {
-  name  = "item-needs-review-notification"
-  scope = azurerm_eventgrid_topic.inventory_events.id   #  Which Topic to monitor
-  included_event_types = ["Inventory.ItemNeedsReview"]  # Only route these event types
-  event_delivery_schema = "CloudEventSchemaV1_0"        # Adhere to EventGrid event type
+resource "azurerm_eventgrid_event_subscription" "example" {
+  retry_policy {
+    max_delivery_attempts = 30
+    event_time_to_live    = 1440  # Minutes (24 hours)
+  }
   
-  # Destination: Where to send matching events
-  webhook_endpoint {
-    url = "https://my-function-app.azurewebsites.net/runtime/webhooks/eventgrid?functionName=SendAdminNotification"
+  # Optional: Dead letter destination
+  dead_letter_destination {
+    storage_blob {
+      storage_account_id          = azurerm_storage_account.example.id
+      storage_blob_container_name = "event-grid-deadletter"
+    }
   }
 }
 ```
-This configures:
-- **Source:** Event Grid Topic `inventory-events`
-- **Filter:** Only events of type `Inventory.ItemNeedsReview`
-- **Destination:** Webhook to notification through url webhook
 
-**4. Subscriber (Event Consumer):**
-A function that receives events FROM Event Grid via webhook.  
-Subscriber function example: 
-```python
-import azure.functions as func
-import logging
+**When retries occur:**
+- HTTP 4xx (except 400, 413, 429) or 5xx from subscriber
+- Subscriber timeout (60 seconds)
+- Network errors
 
-app = func.FunctionApp()
+**Dead letter queue:** After exhausting retries, events move to dead letter storage for investigation.
 
+### Cosmos DB Trigger Retry
 
-@app.function_name(name="SendAdminNotification")
-@app.event_grid_trigger(arg_name="event")  # <- Event Grid trigger, no explicit config needed!
-def send_admin_notification(event: func.EventGridEvent):
-    # Process the event
-    logging.info(f"Received event: {event.event_type}")
-    data = event.get_json().get('data', {})
-    # ... handle notification
+**Behavior:**
+- Uses lease-based checkpointing (no max retry limit)
+- Retries from last successful checkpoint indefinitely
+- Lease timeout: 60 seconds (then another instance can take over)
+
+**Failure handling:**
+- Function crashes → New instance resumes from checkpoint
+- Poison documents → No built-in poison queue (handle in code)
+
+### Blob Trigger Retry
+
+**Default behavior:**
+```json
+// host.json
+{
+  "extensions": {
+    "blobs": {
+      "maxDequeueCount": 5
+    }
+  }
+}
 ```
-In this project, we filter on two different events, but for three subscribers:
-- ItemNeedsReview event &rarr; Only goes to SendAdminNotification 
-- ItemApproved event &rarr; Goes to UpdateItemCatalog + ItemPriceHistory
 
-
-### Test script 
-I have added a script for testing uploads: `./test_upload.sh`. This script will use the Azure CLI and upload an image to the Azure Blob Storage, and thus trigger the 
-azure function to create a new item document, and upload it to the Cosmos DB. 
-
-
-I highly suggest that iteratively add configurations to your `local.settings.json`. It is an excellent way of 
-debugging and figuring out how everything ties together from your local machine, while using real provisioned Azure Resources.
-
-
-In order for eventgrid subscriptions to be able to connect, we need the azure functions to be deployed and running.   
-This is so that the subscriptions are able to connect through the webhook. To solve this, we do deployment in three steps: 
-1) Provision infrastructure 
-2) Deploy Azure Functions
-3) Create and connect Event Grid Subscriptions
-Everything is automated, so the only steps necessary is to run the `up.sh` script.
-
-
-When everything is provisioned, run the `.test_upload.sh` script to upload 5 .png images and trigger the first 
-event grid event: `ItemNeedsReview`.
-Once that is done, you can run the `update_item_documents.sh`. It takes 0 or 1 argument:  
-0: Returns Document Id's from CosmosDB `inventorydb` container `items`.
-1: Updates an item with some preset values, you can change these as you wish in the `update_item.py` script.
-
-### Read more about the Cloud events here:
-https://learn.microsoft.com/en-us/azure/event-grid/cloud-event-schema
+**After 5 failures:** Message moves to `{queue-name}-poison` queue.
 
 ## Key Learning Questions:
 
 ### How do different data operation triggers handle high-frequency events?
 **Cosmos DB Change Feed:**  
 Uses a checkpoint based system with lease containers to track processing progress across multiple function instances. When events 
-arrive rapidly, Azure Functions automatically scales out by creating new instances, whith each instance claiming leasis on different 
+arrive rapidly, Azure Functions automatically scales out by creating new instances, with each instance claiming leases on different 
 partition ranges to process changes in parallel.  
 
 **Blob Triggers:**  
@@ -791,7 +764,7 @@ Use a polling mechanism that scans container content periodically (10 seconds by
 events under high load. They are not recommended for high-frequency scenarios.
 
 **Event Triggers:**  
-Handles high-frequency events through built inn trottling and delivery retry policies, automatically batching events when 
+Handles high-frequency events through built inn throttling and delivery retry policies, automatically batching events when 
 possible and distributing them across scaled function instances.
 
 **Service Bus Triggers:**  
@@ -821,7 +794,3 @@ updates only succeeds if no one else modified it.
 **Service Bus** offers duplicate detection through message IDs and session-enabled queues for guaranteed in-order processing within a session.
 The combination of idempotent operations and explicit deduplication checks ensures reliable and exactly-once semantics 
 even when Azure Functions "at-least-once" delivery guarantee causes retries.
-
-## TODO: Add event-grid specific syllabus data that is relevant for the az204 exam. 
-
----

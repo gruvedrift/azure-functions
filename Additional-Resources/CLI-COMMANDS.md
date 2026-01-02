@@ -58,3 +58,44 @@ az functionapp restart \
   --name <function-app-name> \
   --resource-group <rg>
 ```
+## Essential  CLI commands for Event Grid
+```bash
+# Create Event Grid topic
+az eventgrid topic create \
+  --name <topic-name> \
+  --resource-group <rg> \
+  --location <location> \
+  --input-schema CloudEventSchemaV1_0
+
+# Get topic endpoint
+az eventgrid topic show \
+  --name <topic-name> \
+  --resource-group <rg> \
+  --query "endpoint" \
+  --output tsv
+
+# Get topic access key
+az eventgrid topic key list \
+  --name <topic-name> \
+  --resource-group <rg> \
+  --query "key1" \
+  --output tsv
+
+# Create event subscription
+az eventgrid event-subscription create \
+  --name <subscription-name> \
+  --source-resource-id /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.EventGrid/topics/<topic-name> \
+  --endpoint <webhook-url> \
+  --included-event-types <event-type> \
+  --event-delivery-schema CloudEventSchemaV1_0
+
+# List event subscriptions
+az eventgrid event-subscription list \
+  --source-resource-id /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.EventGrid/topics/<topic-name> \
+  --output table
+
+# Delete event subscription
+az eventgrid event-subscription delete \
+  --name <subscription-name> \
+  --source-resource-id /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.EventGrid/topics/<topic-name>
+```
